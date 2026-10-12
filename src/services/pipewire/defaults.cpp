@@ -241,6 +241,12 @@ void PwDefaultTracker::onDefaultSinkDestroyed() {
 	qCInfo(logDefaults) << "Default sink destroyed.";
 	this->mDefaultSink = nullptr;
 	emit this->defaultSinkChanged();
+
+	// A replacement node with the same name may already be registered, and the metadata
+	// value does not change, so no further default.audio.sink update will arrive.
+	if (auto* node = this->registry->findNodeByName(this->mDefaultSinkName)) {
+		this->setDefaultSink(node);
+	}
 }
 
 void PwDefaultTracker::setDefaultSinkName(const QString& name) {
@@ -282,6 +288,11 @@ void PwDefaultTracker::onDefaultSourceDestroyed() {
 	qCInfo(logDefaults) << "Default source destroyed.";
 	this->mDefaultSource = nullptr;
 	emit this->defaultSourceChanged();
+
+	// See onDefaultSinkDestroyed.
+	if (auto* node = this->registry->findNodeByName(this->mDefaultSourceName)) {
+		this->setDefaultSource(node);
+	}
 }
 
 void PwDefaultTracker::setDefaultSourceName(const QString& name) {
