@@ -687,6 +687,15 @@ bool ProxiedWindow::event(QEvent* event) {
 		emit this->devicePixelRatioChanged();
 	}
 
+	// QQuickDeliveryAgentPrivate::contextMenuTargets() positions a position-less event
+	// at activeFocusItem() without a null check, which focusless layer surfaces never have.
+	if (event->type() == QEvent::ContextMenu) {
+		auto* menuEvent = static_cast<QContextMenuEvent*>(event); // NOLINT
+		if (menuEvent->pos().isNull() && this->activeFocusItem() == nullptr) {
+			return true;
+		}
+	}
+
 	return this->QQuickWindow::event(event);
 }
 
