@@ -98,6 +98,10 @@ void BluetoothAdapter::addInterface(const QString& interface, const QVariantMap&
 	if (interface == "org.bluez.Adapter1") {
 		this->properties.updatePropertySet(properties, false);
 		qCDebug(logAdapter) << "Updated Adapter properties for" << this;
+
+		// The InterfacesAdded snapshot can predate the PropertiesChanged that ends a power
+		// transition, and that signal may have been sent before our subscription was live.
+		this->properties.updateAllViaGetAll();
 	}
 }
 
