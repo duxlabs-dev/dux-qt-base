@@ -145,8 +145,6 @@ bool QmlScanner::scanQmlFile(const QString& path, bool& singleton, bool& interna
 	QString overrideText;
 	bool isOverridden = false;
 
-	auto& pragmaEngine = *QmlScanner::preprocEngine();
-
 	auto postError = [&, this](QString error) {
 		this->scanErrors.append({.file = path, .message = std::move(error), .line = lineNum});
 	};
@@ -200,7 +198,7 @@ bool QmlScanner::scanQmlFile(const QString& path, bool& singleton, bool& interna
 
 		if (line.startsWith("//@ if ")) {
 			auto code = line.sliced(7);
-			auto value = pragmaEngine.evaluate(code, path, 1234);
+			auto value = QmlScanner::preprocEngine()->evaluate(code, path, 1234);
 			bool mask = true;
 
 			if (value.isError()) {

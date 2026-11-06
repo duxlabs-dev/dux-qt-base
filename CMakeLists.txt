@@ -3,7 +3,7 @@ project(dux-qt-base VERSION "0.3.2" LANGUAGES CXX C)
 
 set(UNRELEASED_FEATURES)
 
-set(QT_MIN_VERSION "6.6.0")
+set(QT_MIN_VERSION "6.8.0")
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
@@ -137,17 +137,17 @@ if (DBUS)
 	list(APPEND QT_FPDEPS DBus)
 endif()
 
-find_package(Qt6 REQUIRED COMPONENTS ${QT_FPDEPS})
+find_package(Qt6 ${QT_MIN_VERSION} REQUIRED COMPONENTS ${QT_FPDEPS})
 
 # In Qt 6.10, private dependencies are required to be explicit,
 # but they could not be explicitly depended on prior to 6.9.
 if (Qt6_VERSION VERSION_GREATER_EQUAL "6.9.0")
 	set(QT_NO_PRIVATE_MODULE_WARNING ON)
-	find_package(Qt6 REQUIRED COMPONENTS ${QT_PRIVDEPS})
+	find_package(Qt6 ${QT_MIN_VERSION} REQUIRED COMPONENTS ${QT_PRIVDEPS})
 endif()
 
 set(CMAKE_AUTOUIC OFF)
-qt_standard_project_setup(REQUIRES 6.6)
+qt_standard_project_setup(REQUIRES ${QT_MIN_VERSION})
 set(QT_QML_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/qml_modules)
 
 add_subdirectory(src)

@@ -13,8 +13,8 @@ struct DBusNotificationImage {
 	qint32 height = 0;
 	bool hasAlpha = false;
 	QByteArray data;
+	qint32 rowstride = 0;
 
-	// valid only for the lifetime of the pixmap
 	[[nodiscard]] QImage createImage() const;
 };
 

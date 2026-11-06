@@ -279,22 +279,6 @@ QDir QsPaths::shellDataDir() {
 
 QDir QsPaths::shellStateDir() {
 	if (this->shellStateState == DirState::Unknown) {
-#if QT_VERSION < QT_VERSION_CHECK(6, 7, 0)
-		QDir dir;
-		if (qEnvironmentVariableIsSet("XDG_STATE_HOME")) {
-			dir = QDir(qEnvironmentVariable("XDG_STATE_HOME"));
-		} else {
-			auto home = QDir(QStandardPaths::writableLocation(QStandardPaths::HomeLocation));
-			dir = QDir(home.filePath(".local/state"));
-		}
-
-		if (this->shellStateOverride.isEmpty()) {
-			dir = QDir(dir.filePath("quickshell/by-shell"));
-			dir = QDir(dir.filePath(this->shellId));
-		} else {
-			dir = QDir(this->shellStateOverride.replace("$BASE", dir.path()));
-		}
-#else
 		QDir dir;
 		if (this->shellStateOverride.isEmpty()) {
 			dir = QDir(QStandardPaths::writableLocation(QStandardPaths::StateLocation));
@@ -304,7 +288,6 @@ QDir QsPaths::shellStateDir() {
 			auto basedir = QStandardPaths::writableLocation(QStandardPaths::GenericStateLocation);
 			dir = QDir(this->shellStateOverride.replace("$BASE", basedir));
 		}
-#endif
 		this->mShellStateDir = dir;
 
 		qCDebug(logPaths) << "Initialized state path:" << dir.path();

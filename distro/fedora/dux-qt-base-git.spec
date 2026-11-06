@@ -30,7 +30,7 @@ BuildRequires:  gcc-c++
 BuildRequires:  git-core
 BuildRequires:  ninja-build
 BuildRequires:  pkgconfig
-BuildRequires:  cmake(Qt6Core) >= 6.6.0
+BuildRequires:  cmake(Qt6Core) >= 6.8.0
 BuildRequires:  cmake(Qt6DBus)
 BuildRequires:  cmake(Qt6Network)
 BuildRequires:  cmake(Qt6Qml)

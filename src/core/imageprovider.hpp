@@ -8,6 +8,8 @@
 #include <qtclasshelpermacros.h>
 #include <qtmetamacros.h>
 
+[[nodiscard]] QSize constrainedImageSize(QSize size, const QSize& requestedSize);
+
 class QsImageProvider: public QQuickImageProvider {
 public:
 	explicit QsImageProvider(): QQuickImageProvider(QQuickImageProvider::Image) {}

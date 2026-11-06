@@ -1,5 +1,6 @@
 #include "rendercontrol.hpp"
 #include <algorithm>
+#include <chrono>
 #include <memory>
 #include <optional>
 #include <utility>
@@ -12,6 +13,7 @@
 #include <private/qwaylandbuffer_p.h>
 #include <private/qwaylandwindow_p.h>
 #include <qabstractanimation.h>
+#include <qchronotimer.h>
 #include <qcoreevent.h>
 #include <qguiapplication.h>
 #include <qimage.h>
@@ -34,7 +36,6 @@
 #include <qsurfaceformat.h>
 #include <qtclasshelpermacros.h>
 #include <qtenvironmentvariables.h>
-#include <qtimer.h>
 #include <qtmetamacros.h>
 #include <qtypes.h>
 #include <rhi/qrhi.h>
@@ -80,20 +81,33 @@ std::shared_ptr<QRhi> sharedRhi(const QSurfaceFormat& format) {
 	return result;
 }
 
-class AnimationTimer: public QTimer {
+class AnimationTimer: public QChronoTimer {
 public:
-	explicit AnimationTimer(QAnimationDriver* driver): QTimer(driver) {
+	explicit AnimationTimer(QAnimationDriver* driver): QChronoTimer(driver) {
 		this->setTimerType(Qt::PreciseTimer);
-		QObject::connect(this, &QTimer::timeout, driver, &QAnimationDriver::advance);
+		QObject::connect(this, &QChronoTimer::timeout, driver, &QAnimationDriver::advance);
+
+		auto* app = static_cast<QGuiApplication*>(QGuiApplication::instance()); // NOLINT
+		QObject::connect(app, &QGuiApplication::screenAdded, this, &AnimationTimer::onScreenAdded);
+		QObject::connect(app, &QGuiApplication::screenRemoved, this, &AnimationTimer::updateInterval);
+		for (auto* screen: QGuiApplication::screens()) this->onScreenAdded(screen);
 	}
 
-	void startAtRefreshRate() {
+private:
+	void onScreenAdded(QScreen* screen) {
+		QObject::connect(screen, &QScreen::refreshRateChanged, this, &AnimationTimer::updateInterval);
+		this->updateInterval();
+	}
+
+	// The driver advances by wall time, so slower screens skip ticks instead of lagging.
+	void updateInterval() {
 		auto refreshRate = 60.0;
 		for (auto* screen: QGuiApplication::screens()) {
 			refreshRate = std::max(refreshRate, screen->refreshRate());
 		}
 
-		this->start(static_cast<int>(1000 / refreshRate));
+		auto interval = std::chrono::duration<double>(1 / refreshRate);
+		this->setInterval(std::chrono::round<std::chrono::nanoseconds>(interval));
 	}
 };
 
@@ -108,9 +122,9 @@ void driveAnimations() {
 	if (!driver || loop->sceneGraphContext()->isVSyncDependent(driver)) return;
 
 	auto* timer = new AnimationTimer(driver);
-	QObject::connect(driver, &QAnimationDriver::started, timer, &AnimationTimer::startAtRefreshRate);
-	QObject::connect(driver, &QAnimationDriver::stopped, timer, &QTimer::stop);
-	if (driver->isRunning()) timer->startAtRefreshRate();
+	QObject::connect(driver, &QAnimationDriver::started, timer, &QChronoTimer::start);
+	QObject::connect(driver, &QAnimationDriver::stopped, timer, &QChronoTimer::stop);
+	if (driver->isRunning()) timer->start();
 }
 
 // Borrow the wl_buffer for one commit; SurfaceBufferPool owns it and handles releases.
@@ -158,15 +172,24 @@ SurfaceBuffer* SurfaceBufferPool::acquire(QQuickWindow* window, QRhi* rhi, QSize
 	});
 
 	for (const auto& buffer: this->buffers) {
-		if (matches(buffer) && !buffer->busy) return buffer.get();
+		if (!matches(buffer) || buffer->busy) continue;
+		this->current = buffer.get();
+		return this->current;
 	}
 
-	return this->create(window, rhi, size, alpha);
+	this->current = this->create(window, rhi, size, alpha);
+	return this->current;
 }
 
 void SurfaceBufferPool::clear() {
+	this->current = nullptr;
 	this->buffers.clear();
 	this->depthStencil.reset();
+}
+
+bool SurfaceBufferPool::trim() {
+	auto idle = [this](const auto& buffer) { return buffer.get() != this->current && !buffer->busy; };
+	return std::erase_if(this->buffers, idle) != 0;
 }
 
 bool SurfaceBufferPool::available(QSize size, bool alpha) const {
@@ -224,9 +247,13 @@ SurfaceBuffer* SurfaceBufferPool::create(QQuickWindow* window, QRhi* rhi, QSize 
 }
 
 WaylandRenderControl::WaylandRenderControl(): pool(this) {
+	this->trimTimer.setSingleShot(true);
+	this->trimTimer.setInterval(std::chrono::seconds(1));
+
 	// clang-format off
 	QObject::connect(this, &QQuickRenderControl::renderRequested, this, &WaylandRenderControl::onRenderRequested);
 	QObject::connect(this, &QQuickRenderControl::sceneChanged, this, &WaylandRenderControl::scheduleFrame);
+	QObject::connect(&this->trimTimer, &QTimer::timeout, this, &WaylandRenderControl::trimBuffers);
 	// clang-format on
 }
 
@@ -258,7 +285,19 @@ void WaylandRenderControl::onRenderRequested() {
 }
 
 void WaylandRenderControl::onBufferReleased() {
+	this->trimTimer.start();
 	if (std::exchange(this->bufferAwaited, false)) this->scheduleFrame();
+}
+
+void WaylandRenderControl::trimBuffers() {
+	// WlDmaBufferQSGTexture's destructor needs the current context.
+	if (!this->rhi->makeThreadLocalNativeContextCurrent()) return;
+	if (!this->pool.trim()) return;
+
+	// QRhiGles2 frees released GL objects in beginOffscreenFrame(), see executeDeferredReleases().
+	QRhiCommandBuffer* commands = nullptr;
+	if (this->rhi->beginOffscreenFrame(&commands) != QRhi::FrameOpSuccess) return;
+	this->rhi->endOffscreenFrame();
 }
 
 bool WaylandRenderControl::eventFilter(QObject* watched, QEvent* event) {

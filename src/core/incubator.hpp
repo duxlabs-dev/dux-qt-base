@@ -50,12 +50,7 @@ protected:
 	void incubatingObjectCountChanged(int count) override;
 
 private:
-// QPointer did not work with forward declarations prior to 6.7
-#if QT_VERSION >= QT_VERSION_CHECK(6, 7, 0)
 	QPointer<QSGRenderLoop> renderLoop = nullptr;
-#else
-	QSGRenderLoop* renderLoop = nullptr;
-#endif
 	int incubationTime = 0;
 	int timerId = 0;
 	bool followRenderloop = false;

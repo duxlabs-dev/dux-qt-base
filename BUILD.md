@@ -47,7 +47,7 @@ release or crashes via ABI mismatches will occur. Private headers are needed for
 as the `QuickPrivate` and `WaylandClientPrivate` components, so install the
 distro's private-devel packages where they are split out.
 
-At least Qt 6.6 is required. `qt6svg` is recommended at runtime, otherwise svg
+At least Qt 6.8 is required. `qt6svg` is recommended at runtime, otherwise svg
 images and icons will not load.
 
 All features are enabled by default and some have their own dependencies.

@@ -267,10 +267,6 @@ private:
 
 } // namespace qs::dbus
 
-#if QT_VERSION < QT_VERSION_CHECK(6, 8, 0)
-QDebug operator<<(QDebug debug, const QDBusObjectPath& path);
-#endif
-
 // NOLINTBEGIN
 #define QS_DBUS_BINDABLE_PROPERTY_GROUP(Class, name) qs::dbus::DBusPropertyGroup name {this};
 

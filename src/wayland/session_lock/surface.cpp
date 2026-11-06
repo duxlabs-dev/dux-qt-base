@@ -76,9 +76,7 @@ void QSWaylandSessionLockSurface::ext_session_lock_surface_v1_configure(
 		this->configured = true;
 
 		this->window()->resizeFromApplyConfigure(this->size);
-#if QT_VERSION < QT_VERSION_CHECK(6, 7, 0)
-		this->window()->handleExpose(QRect(QPoint(), this->size));
-#elif QT_VERSION < QT_VERSION_CHECK(6, 9, 0)
+#if QT_VERSION < QT_VERSION_CHECK(6, 9, 0)
 		this->window()->sendRecursiveExposeEvent();
 #else
 		this->window()->updateExposure();

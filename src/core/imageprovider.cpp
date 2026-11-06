@@ -29,6 +29,14 @@ void parseReq(const QString& req, QString& target, QString& param) {
 
 } // namespace
 
+QSize constrainedImageSize(QSize size, const QSize& requestedSize) {
+	if (size.isEmpty()) return size;
+	auto bounds = size;
+	if (requestedSize.width() > 0) bounds.setWidth(qMin(size.width(), requestedSize.width()));
+	if (requestedSize.height() > 0) bounds.setHeight(qMin(size.height(), requestedSize.height()));
+	return size.scaled(bounds, Qt::KeepAspectRatio);
+}
+
 QsImageHandle::QsImageHandle(QQmlImageProviderBase::ImageType type)
     : type(type)
     , id(QString::number(++handleIndex)) {

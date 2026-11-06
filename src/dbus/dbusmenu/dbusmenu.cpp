@@ -2,6 +2,7 @@
 #include <algorithm>
 
 #include <qbytearray.h>
+#include <qbuffer.h>
 #include <qcontainerfwd.h>
 #include <qdatetime.h>
 #include <qdbusconnection.h>
@@ -11,6 +12,7 @@
 #include <qdbuspendingreply.h>
 #include <qdebug.h>
 #include <qimage.h>
+#include <qimagereader.h>
 #include <qlogging.h>
 #include <qloggingcategory.h>
 #include <qnamespace.h>
@@ -496,14 +498,15 @@ QDebug operator<<(QDebug debug, DBusMenu* menu) {
 }
 
 QImage
-DBusMenuPngImage::requestImage(const QString& /*unused*/, QSize* size, const QSize& /*unused*/) {
-	auto image = QImage();
-
-	if (!image.loadFromData(this->data, "PNG")) {
-		qCWarning(logDbusMenu) << "Failed to load dbusmenu item png";
-	}
-
-	if (size != nullptr) *size = image.size();
+DBusMenuPngImage::requestImage(const QString& /*unused*/, QSize* size, const QSize& requestedSize) {
+	auto buffer = QBuffer(&this->data);
+	buffer.open(QIODevice::ReadOnly);
+	auto reader = QImageReader(&buffer, "PNG");
+	auto imageSize = reader.size();
+	if (size != nullptr) *size = imageSize;
+	reader.setScaledSize(constrainedImageSize(imageSize, requestedSize));
+	auto image = reader.read();
+	if (image.isNull()) qCWarning(logDbusMenu) << "Failed to load dbusmenu item png";
 	return image;
 }
 

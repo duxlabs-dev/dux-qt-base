@@ -26,10 +26,6 @@
 #include "shell_integration.hpp"
 #include "wlr_layershell.hpp"
 
-#if QT_VERSION < QT_VERSION_CHECK(6, 7, 0)
-#include <qpoint.h>
-#endif
-
 namespace qs::wayland::layershell {
 
 namespace {
@@ -199,9 +195,7 @@ void LayerSurface::zwlr_layer_surface_v1_configure(quint32 serial, quint32 width
 	if (!this->configured) {
 		this->configured = true;
 		this->window()->resizeFromApplyConfigure(this->size);
-#if QT_VERSION < QT_VERSION_CHECK(6, 7, 0)
-		this->window()->handleExpose(QRect(QPoint(), this->size));
-#elif QT_VERSION < QT_VERSION_CHECK(6, 9, 0)
+#if QT_VERSION < QT_VERSION_CHECK(6, 9, 0)
 		this->window()->sendRecursiveExposeEvent();
 #else
 		this->window()->updateExposure();
