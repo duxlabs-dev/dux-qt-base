@@ -1,5 +1,5 @@
 { rev ? null }: (final: prev: {
-  quickshell = final.callPackage ./default.nix {
+  dux-qt-base = final.callPackage ./default.nix {
     gitRev = rev;
   };
 })

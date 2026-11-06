@@ -35,7 +35,7 @@ clean:
 	rm -rf {{builddir}}
 
 run *ARGS='': build
-	{{builddir}}/src/quickshell {{ARGS}}
+	{{builddir}}/src/dux-qt-base {{ARGS}}
 
 test *ARGS='': build
 	ctest --test-dir {{builddir}} --output-on-failure {{ARGS}}

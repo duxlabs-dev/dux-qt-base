@@ -1,0 +1,9 @@
+prefix=@CMAKE_INSTALL_PREFIX@
+libdir=@CMAKE_INSTALL_FULL_LIBDIR@
+includedir=@CMAKE_INSTALL_FULL_INCLUDEDIR@
+
+Name: dux-qt-base
+Description: Quickshell QML runtime as a shared library with a C entry point
+Version: @PROJECT_VERSION@
+Libs: -L${libdir} -ldux-qt-base
+Cflags: -I${includedir}

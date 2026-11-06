@@ -16,14 +16,14 @@
     };
 
     packages = forEachSystem (system: pkgs: rec {
-      quickshell = pkgs.quickshell;
-      default = quickshell;
+      dux-qt-base = pkgs.dux-qt-base;
+      default = dux-qt-base;
     });
 
     devShells = forEachSystem (system: pkgs: rec {
       default = import ./shell.nix {
         inherit pkgs;
-        quickshell = self.packages.${system}.quickshell.override {
+        dux-qt-base = self.packages.${system}.dux-qt-base.override {
           stdenv = pkgs.clangStdenv;
         };
       };

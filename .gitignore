@@ -13,3 +13,6 @@
 # direnv
 /.envrc
 /.direnv/
+
+# build logs
+build-*.log

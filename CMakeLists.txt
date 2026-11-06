@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(quickshell VERSION "0.3.2" LANGUAGES CXX C)
+project(dux-qt-base VERSION "0.3.2" LANGUAGES CXX C)
 
 set(UNRELEASED_FEATURES)
 
@@ -10,7 +10,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(QS_BUILD_OPTIONS "")
 
 # should be changed for forks
-set(CRASHREPORT_URL "https://github.com/outfoxxed/quickshell/issues/new?template=crash2.yml" CACHE STRING "Bugreport URL")
+set(CRASHREPORT_URL "https://github.com/duxlabs-dev/dux-qt-base/issues/new" CACHE STRING "Bugreport URL")
 
 function(boption VAR NAME DEFAULT)
 	cmake_parse_arguments(PARSE_ARGV 3 arg "" "REQUIRES" "")
@@ -39,21 +39,19 @@ function(boption VAR NAME DEFAULT)
 endfunction()
 
 set(DISTRIBUTOR "Unset" CACHE STRING "Distributor")
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 string(APPEND QS_BUILD_OPTIONS "  Distributor: ${DISTRIBUTOR}")
 
-message(STATUS "Quickshell configuration")
+message(STATUS "dux-qt-base configuration")
 message(STATUS "  Distributor: ${DISTRIBUTOR}")
 boption(NO_PCH "Disable precompild headers (dev)" OFF)
 boption(BUILD_TESTING "Build tests (dev)" OFF)
+boption(BUILD_EXECUTABLE "Standalone executable (dev)" OFF)
 boption(ASAN "ASAN (dev)" OFF) # note: better output with gcc than clang
 boption(FRAME_POINTERS "Keep Frame Pointers (dev)" ${ASAN})
 
-if (CMAKE_SYSTEM_NAME STREQUAL "FreeBSD")
-	boption(USE_JEMALLOC "Use jemalloc" OFF)
-else()
-	boption(USE_JEMALLOC "Use jemalloc" ON)
-endif()
-boption(CRASH_HANDLER "Crash Handling" ON)
+boption(USE_JEMALLOC "Use jemalloc" OFF)
+boption(CRASH_HANDLER "Crash Handling" OFF)
 boption(SOCKETS "Unix Sockets" ON)
 boption(WAYLAND "Wayland" ON)
 boption(WAYLAND_WLR_LAYERSHELL "  Wlroots Layer-Shell" ON REQUIRES WAYLAND)
@@ -160,21 +158,3 @@ if (USE_JEMALLOC)
 	pkg_check_modules(JEMALLOC REQUIRED jemalloc)
 	target_link_libraries(quickshell PRIVATE ${JEMALLOC_LIBRARIES})
 endif()
-
-install(CODE "
-	execute_process(
-		COMMAND ${CMAKE_COMMAND} -E create_symlink \
-		${CMAKE_INSTALL_FULL_BINDIR}/quickshell \$ENV{DESTDIR}${CMAKE_INSTALL_FULL_BINDIR}/qs
-	)
-")
-
-install(
-	FILES ${CMAKE_SOURCE_DIR}/assets/org.quickshell.desktop
-	DESTINATION ${CMAKE_INSTALL_DATADIR}/applications
-)
-
-install(
-	FILES ${CMAKE_SOURCE_DIR}/assets/quickshell.svg
-	DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/scalable/apps
-	RENAME org.quickshell.svg
-)

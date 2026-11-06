@@ -3,7 +3,7 @@ set(INSTALL_QML_PREFIX "" CACHE STRING "QML install prefix")
 
 # There doesn't seem to be a standard cross-distro qml install path.
 if ("${INSTALL_QMLDIR}" STREQUAL "" AND "${INSTALL_QML_PREFIX}" STREQUAL "")
-	message(WARNING "Neither INSTALL_QMLDIR nor INSTALL_QML_PREFIX is set. QML modules will not be installed.")
+	message(STATUS "QML tooling metadata not installed (INSTALL_QMLDIR and INSTALL_QML_PREFIX unset)")
 else()
 	if ("${INSTALL_QMLDIR}" STREQUAL "")
 		set(QML_FULL_INSTALLDIR "${CMAKE_INSTALL_PREFIX}/${INSTALL_QML_PREFIX}")
