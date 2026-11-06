@@ -45,6 +45,15 @@ import "C"
 
 The shared binding lives in `github.com/duxlabs-dev/dux-go/qtbase`.
 
+Apps vendor this repo as a submodule and link it statically instead of
+installing the shared library: build with cmake, then
+`scripts/cgo-link-flags.py <build dir> <out>/dux-qt-base.pc` writes a
+pkg-config file whose `Libs` repeats the library's own link line (archives,
+init objects, system libs) so `go build` with
+`PKG_CONFIG_PATH=<out>` produces one binary with no `libdux-qt-base.so`
+dependency. cgo rejects `-Wl,--export-dynamic-symbol`, which the wayland
+null-proxy guard needs, so set `CGO_LDFLAGS_ALLOW='-Wl,--export-dynamic-symbol=.*'`.
+
 ## License
 
 LGPL-3.0-only, see [LICENSE](LICENSE) and [LICENSE-GPL](LICENSE-GPL).
