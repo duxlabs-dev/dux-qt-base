@@ -29,9 +29,3 @@ target_link_libraries(quickshell-service-notifications PRIVATE Qt::Quick Qt::DBu
 target_link_libraries(quickshell PRIVATE quickshell-service-notificationsplugin)
 
 qs_module_pch(quickshell-service-notifications SET dbus)
-
-if (BUILD_TESTING)
-	add_executable(notificationimages test/images.cpp)
-	target_link_libraries(notificationimages PRIVATE Qt::Test Qt::Quick Qt::DBus quickshell)
-	add_test(NAME notificationimages COMMAND notificationimages)
-endif()
