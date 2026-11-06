@@ -11,6 +11,7 @@
 #include <private/qsgrenderloop_p.h>
 #include <private/qwaylandabstractdecoration_p.h>
 #include <private/qwaylandbuffer_p.h>
+#include <private/qwaylanddisplay_p.h>
 #include <private/qwaylandwindow_p.h>
 #include <qabstractanimation.h>
 #include <qchronotimer.h>
@@ -47,6 +48,7 @@
 #include "../window/proxywindow.hpp"
 #include "../window/rendercontrol.hpp"
 #include "buffer/manager.hpp"
+#include "buffer/shm.hpp"
 
 namespace qs::wayland::render {
 
@@ -370,15 +372,27 @@ void WaylandRenderControl::renderFrame() {
 	if (!window->isExposed()) return;
 	// Allow the first frame with updates disabled; see QSGThreadedRenderLoop::handleExposure().
 	if (this->presented && !QQuickWindowPrivate::get(window)->updatesEnabled) return;
-	if (!this->rhi && !this->initializeScene()) return;
-	if (!buffer::WlBufferManager::instance()->isReady()) return;
+
+	auto* waylandWindow = dynamic_cast<QtWaylandClient::QWaylandWindow*>(window->handle());
+	if (!waylandWindow) return;
+
+	// The pixel needs neither the scene graph nor dmabuf formats.
+	auto inputOnly = this->inputOnly(waylandWindow);
+	if (!inputOnly && !this->rhi && !this->initializeScene()) return;
+	if (!inputOnly && !buffer::WlBufferManager::instance()->isReady()) return;
+	// A window that showed the pixel renders its whole scene again.
+	if (!inputOnly && std::exchange(this->pixelAttached, false)) this->repaintRequested = true;
 
 	this->polishing = true;
 	this->polishItems();
 	this->polishing = false;
 
-	auto* waylandWindow = dynamic_cast<QtWaylandClient::QWaylandWindow*>(window->handle());
-	if (!waylandWindow || !window->isExposed()) return;
+	if (!window->isExposed()) return;
+
+	if (inputOnly) {
+		this->commitPixel(waylandWindow);
+		return;
+	}
 
 	auto* decoration = waylandWindow->decoration();
 	auto scale = waylandWindow->scale();
@@ -465,6 +479,54 @@ void WaylandRenderControl::renderFrame() {
 	tracker->presented();
 	// Redraw stale layer textures carried over by SceneDamageTracker::presented().
 	if (tracker->pendingDamage()) this->scheduleFrame();
+}
+
+bool WaylandRenderControl::inputOnly(QtWaylandClient::QWaylandWindow* waylandWindow) const {
+	auto* proxied = qobject_cast<ProxiedWindow*>(this->window());
+	if (!proxied || !proxied->proxy() || !proxied->proxy()->inputOnly()) return false;
+
+	// Qt scales buffers through a viewport only under both globals; see QWaylandWindow::initWindow().
+	auto* display = waylandWindow->display();
+	if (display->viewporter() && display->fractionalScaleManager()) return true;
+
+	static auto logged = false;
+	if (!std::exchange(logged, true)) {
+		qCInfo(logRenderControl) << "Input only windows render normally without wp_viewporter.";
+	}
+
+	return false;
+}
+
+// One transparent pixel scaled to the surface by QWaylandWindow's viewport, so no surface sized buffer is kept.
+void WaylandRenderControl::commitPixel(QtWaylandClient::QWaylandWindow* waylandWindow) {
+	if (!this->pixel) {
+		buffer::WlBufferRequest request;
+		request.width = 1;
+		request.height = 1;
+		request.shm.formats.push(WL_SHM_FORMAT_ARGB8888);
+		this->pixel.reset(buffer::shm::ShmbufManager::createShmbuf(request));
+	}
+
+	if (!this->pixel) {
+		qCWarning(logRenderControl) << "Failed to create the input only buffer for" << this->window();
+		this->commitWithoutFrame();
+		return;
+	}
+
+	// The scene buffers are released like those of a hidden window.
+	if (!this->pixelAttached) {
+		this->pool.forget();
+		this->trimTimer.start();
+	}
+
+	auto ref = WlBufferRef(this->pixel->buffer(), this->pixel->size());
+	waylandWindow->safeCommit(&ref, QRect(QPoint(), ref.size()));
+	QQuickWindowPrivate::get(this->window())->fireFrameSwapped();
+	if (!ref.busy()) return;
+
+	this->commitRequested = false;
+	this->presented = true;
+	this->pixelAttached = true;
 }
 
 void WaylandRenderControl::abortFrame() {

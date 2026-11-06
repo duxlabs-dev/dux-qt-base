@@ -130,6 +130,9 @@ void WindowInterface::setSurfaceFormat(QsSurfaceFormat format) const { this->pro
 bool WindowInterface::updatesEnabled() const { return this->proxyWindow()->updatesEnabled(); };
 void WindowInterface::setUpdatesEnabled(bool updatesEnabled) const { this->proxyWindow()->setUpdatesEnabled(updatesEnabled); };
 
+bool WindowInterface::inputOnly() const { return this->proxyWindow()->inputOnly(); };
+void WindowInterface::setInputOnly(bool inputOnly) const { this->proxyWindow()->setInputOnly(inputOnly); };
+
 QQmlListProperty<QObject> WindowInterface::data() const { return this->proxyWindow()->data(); };
 // clang-format on
 
@@ -152,6 +155,7 @@ void WindowInterface::connectSignals() const {
 	QObject::connect(window, &ProxyWindowBase::maskChanged, this, &WindowInterface::maskChanged);
 	QObject::connect(window, &ProxyWindowBase::surfaceFormatChanged, this, &WindowInterface::surfaceFormatChanged);
 	QObject::connect(window, &ProxyWindowBase::updatesEnabledChanged, this, &WindowInterface::updatesEnabledChanged);
+	QObject::connect(window, &ProxyWindowBase::inputOnlyChanged, this, &WindowInterface::inputOnlyChanged);
 	// clang-format on
 }
 

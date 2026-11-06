@@ -24,6 +24,10 @@ namespace qs::window {
 class WindowDamageTracker;
 }
 
+namespace QtWaylandClient {
+class QWaylandWindow;
+}
+
 namespace qs::wayland::render {
 
 class SurfaceBufferPool;
@@ -104,6 +108,8 @@ private slots:
 
 private:
 	bool initializeScene();
+	[[nodiscard]] bool inputOnly(QtWaylandClient::QWaylandWindow* waylandWindow) const;
+	void commitPixel(QtWaylandClient::QWaylandWindow* waylandWindow);
 	void renderFrame();
 	void abortFrame();
 	void commitWithoutFrame();
@@ -114,8 +120,10 @@ private:
 	SurfaceBufferPool pool;
 	std::unique_ptr<DecorationTarget> decoration;
 	qs::window::WindowDamageTracker* tracker = nullptr;
+	std::unique_ptr<buffer::WlBuffer> pixel;
 	QTimer trimTimer;
 	bool bufferAwaited = false;
+	bool pixelAttached = false;
 	bool commitRequested = false;
 	bool presented = false;
 	bool repaintRequested = false;

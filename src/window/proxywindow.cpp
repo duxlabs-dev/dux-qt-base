@@ -508,6 +508,16 @@ void ProxyWindowBase::setUpdatesEnabled(bool updatesEnabled) {
 	emit this->updatesEnabledChanged();
 }
 
+bool ProxyWindowBase::inputOnly() const { return this->mInputOnly; }
+
+void ProxyWindowBase::setInputOnly(bool inputOnly) {
+	if (inputOnly == this->mInputOnly) return;
+	this->mInputOnly = inputOnly;
+	// Swap the pixel and the scene on the next frame.
+	if (this->window != nullptr) this->window->update();
+	emit this->inputOnlyChanged();
+}
+
 qreal ProxyWindowBase::devicePixelRatio() const {
 	if (this->window != nullptr) return this->window->devicePixelRatio();
 	if (this->mScreen != nullptr) return this->mScreen->devicePixelRatio();

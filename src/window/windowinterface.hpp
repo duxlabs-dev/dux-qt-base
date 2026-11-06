@@ -152,6 +152,15 @@ class WindowInterface: public Reloadable {
 	/// When set back to true, a new frame is rendered, including any changes made
 	/// while updates were disabled.
 	Q_PROPERTY(bool updatesEnabled READ updatesEnabled WRITE setUpdatesEnabled NOTIFY updatesEnabledChanged);
+	/// If the window exists only to receive input. Defaults to false.
+	///
+	/// An input only window attaches a single transparent pixel scaled to the surface
+	/// instead of rendering its content, so it keeps no surface sized buffer. Items still
+	/// receive pointer and keyboard events, but nothing they draw is shown.
+	///
+	/// > [!NOTE] Requires the `RenderControl` pragma and a compositor with `wp_viewporter`
+	/// > and `wp_fractional_scale_v1`. The window renders normally otherwise.
+	Q_PROPERTY(bool inputOnly READ inputOnly WRITE setInputOnly NOTIFY inputOnlyChanged);
 	Q_PROPERTY(QQmlListProperty<QObject> data READ data);
 	// clang-format on
 	Q_CLASSINFO("DefaultProperty", "data");
@@ -243,6 +252,9 @@ public:
 	[[nodiscard]] bool updatesEnabled() const;
 	void setUpdatesEnabled(bool updatesEnabled) const;
 
+	[[nodiscard]] bool inputOnly() const;
+	void setInputOnly(bool inputOnly) const;
+
 	[[nodiscard]] QQmlListProperty<QObject> data() const;
 
 	static QsWindowAttached* qmlAttachedProperties(QObject* object);
@@ -271,6 +283,7 @@ signals:
 	void maskChanged();
 	void surfaceFormatChanged();
 	void updatesEnabledChanged();
+	void inputOnlyChanged();
 
 protected:
 	void connectSignals() const;

@@ -65,6 +65,7 @@ class ProxyWindowBase: public Reloadable {
 	Q_PROPERTY(bool backingWindowVisible READ isVisibleDirect NOTIFY backerVisibilityChanged);
 	Q_PROPERTY(QsSurfaceFormat surfaceFormat READ surfaceFormat WRITE setSurfaceFormat NOTIFY surfaceFormatChanged);
 	Q_PROPERTY(bool updatesEnabled READ updatesEnabled WRITE setUpdatesEnabled NOTIFY updatesEnabledChanged);
+	Q_PROPERTY(bool inputOnly READ inputOnly WRITE setInputOnly NOTIFY inputOnlyChanged);
 	Q_PROPERTY(QQmlListProperty<QObject> data READ data);
 	// clang-format on
 	Q_CLASSINFO("DefaultProperty", "data");
@@ -153,6 +154,9 @@ public:
 	[[nodiscard]] bool updatesEnabled() const;
 	void setUpdatesEnabled(bool updatesEnabled);
 
+	[[nodiscard]] bool inputOnly() const;
+	void setInputOnly(bool inputOnly);
+
 	[[nodiscard]] QObject* windowTransform() const { return nullptr; } // NOLINT
 
 	[[nodiscard]] QQmlListProperty<QObject> data();
@@ -177,6 +181,7 @@ signals:
 	void maskChanged();
 	void surfaceFormatChanged();
 	void updatesEnabledChanged();
+	void inputOnlyChanged();
 	void polished();
 
 protected slots:
@@ -202,6 +207,7 @@ protected:
 	bool reloadComplete = false;
 	bool ranLints = false;
 	bool mUpdatesEnabled = true;
+	bool mInputOnly = false;
 	QsSurfaceFormat qsSurfaceFormat;
 	QSurfaceFormat mSurfaceFormat;
 
