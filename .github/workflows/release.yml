@@ -1,8 +1,8 @@
 name: Create Release
 
-# Tag push: creates the GitHub release and attaches the prebuilt Arch library
+# Tag push: creates the GitHub release and attaches the prebuilt Arch libraries
 # for the AUR dux-qt-base-bin package. Manual run with an existing tag attaches
-# a fresh asset built against the Arch Qt of the day (Qt rebuilds).
+# fresh assets built against the Arch Qt of the day (Qt rebuilds).
 
 on:
   push:
@@ -10,7 +10,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Existing tag to build the Arch asset for (e.g. v0.3.2)'
+        description: 'Existing tag to build the Arch assets for (e.g. v0.3.2)'
         required: true
         type: string
 
@@ -21,14 +21,57 @@ concurrency:
   group: release-${{ inputs.tag || github.ref_name }}
   cancel-in-progress: false
 
+env:
+  TAG: ${{ inputs.tag || github.ref_name }}
+
 jobs:
-  arch-library:
-    name: Arch x86_64 library
+  release:
+    name: GitHub release
     runs-on: ubuntu-latest
+    steps:
+      - name: Checkout tag
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ env.TAG }}
+
+      - name: Create release
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "release $TAG exists"
+            exit 0
+          fi
+          if [ -f "changelog/$TAG.md" ]; then
+            gh release create "$TAG" --title "$TAG" --notes-file "changelog/$TAG.md"
+          else
+            gh release create "$TAG" --title "$TAG" --generate-notes
+          fi
+
+      - name: Check release exists
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release view "$TAG" >/dev/null
+
+  arch-library:
+    name: Arch ${{ matrix.arch }} library
+    needs: release
+    runs-on: ${{ matrix.runner }}
     container:
-      image: archlinux:base-devel
-    env:
-      TAG: ${{ inputs.tag || github.ref_name }}
+      image: ${{ matrix.image }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-latest
+            image: archlinux:base-devel
+          # Arch Linux ARM ships its own Qt builds; menci/archlinuxarm is rebuilt daily from its repos
+          - arch: aarch64
+            runner: ubuntu-24.04-arm
+            image: menci/archlinuxarm:base-devel
     steps:
       - name: Install dependencies
         run: |
@@ -47,6 +90,7 @@ jobs:
       - name: Build
         run: |
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          test "$(uname -m)" = "${{ matrix.arch }}"
           cmake -GNinja -B build \
             -DCMAKE_BUILD_TYPE=RelWithDebInfo \
             -DCMAKE_INSTALL_PREFIX=/usr \
@@ -61,27 +105,12 @@ jobs:
         run: |
           VERSION="${TAG#v}"
           QTVER=$(pacman -Q qt6-base | awk '{print $2}' | sed 's/-[0-9]*$//')
-          ASSET="dux-qt-base-${VERSION}-qt${QTVER}-x86_64.tar.zst"
+          ASSET="dux-qt-base-${VERSION}-qt${QTVER}-${{ matrix.arch }}.tar.zst"
           tar -C dest --zstd -cf "$ASSET" usr
           sha256sum "$ASSET" > "$ASSET.sha256"
           echo "asset=$ASSET" >> "$GITHUB_OUTPUT"
           echo "qtver=$QTVER" >> "$GITHUB_OUTPUT"
           tar -tf "$ASSET"
-
-      - name: Create release
-        if: github.event_name == 'push'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            echo "release $TAG exists"
-            exit 0
-          fi
-          if [ -f "changelog/$TAG.md" ]; then
-            gh release create "$TAG" --title "$TAG" --notes-file "changelog/$TAG.md"
-          else
-            gh release create "$TAG" --title "$TAG" --generate-notes
-          fi
 
       - name: Upload asset
         env:
