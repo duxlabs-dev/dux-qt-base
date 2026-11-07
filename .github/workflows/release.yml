@@ -1,0 +1,92 @@
+name: Create Release
+
+# Tag push: creates the GitHub release and attaches the prebuilt Arch library
+# for the AUR dux-qt-base-bin package. Manual run with an existing tag attaches
+# a fresh asset built against the Arch Qt of the day (Qt rebuilds).
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing tag to build the Arch asset for (e.g. v0.3.2)'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  arch-library:
+    name: Arch x86_64 library
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux:base-devel
+    env:
+      TAG: ${{ inputs.tag || github.ref_name }}
+    steps:
+      - name: Install dependencies
+        run: |
+          pacman -Syu --noconfirm --needed \
+            git github-cli zstd cmake ninja pkgconf \
+            qt6-base qt6-declarative qt6-wayland qt6-shadertools \
+            spirv-tools cli11 vulkan-headers \
+            wayland wayland-protocols libdrm libglvnd mesa libxcb libxkbcommon \
+            libpipewire pam polkit glib2
+
+      - name: Checkout tag
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ env.TAG }}
+
+      - name: Build
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          cmake -GNinja -B build \
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DCMAKE_INSTALL_PREFIX=/usr \
+            -DCMAKE_INSTALL_LIBDIR=lib \
+            -DDISTRIBUTOR="AUR (dux-qt-base-bin)" \
+            -DGIT_REVISION="$TAG"
+          cmake --build build
+          DESTDIR="$PWD/dest" cmake --install build
+
+      - name: Package
+        id: package
+        run: |
+          VERSION="${TAG#v}"
+          QTVER=$(pacman -Q qt6-base | awk '{print $2}' | sed 's/-[0-9]*$//')
+          ASSET="dux-qt-base-${VERSION}-qt${QTVER}-x86_64.tar.zst"
+          tar -C dest --zstd -cf "$ASSET" usr
+          sha256sum "$ASSET" > "$ASSET.sha256"
+          echo "asset=$ASSET" >> "$GITHUB_OUTPUT"
+          echo "qtver=$QTVER" >> "$GITHUB_OUTPUT"
+          tar -tf "$ASSET"
+
+      - name: Create release
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "release $TAG exists"
+            exit 0
+          fi
+          if [ -f "changelog/$TAG.md" ]; then
+            gh release create "$TAG" --title "$TAG" --notes-file "changelog/$TAG.md"
+          else
+            gh release create "$TAG" --title "$TAG" --generate-notes
+          fi
+
+      - name: Upload asset
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ASSET: ${{ steps.package.outputs.asset }}
+        run: |
+          gh release upload "$TAG" "$ASSET" "$ASSET.sha256" --clobber
+          echo "uploaded $ASSET (qt ${{ steps.package.outputs.qtver }}) to $TAG" >> "$GITHUB_STEP_SUMMARY"
