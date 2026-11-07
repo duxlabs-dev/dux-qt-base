@@ -42,6 +42,7 @@ it when the fork diverges further.
   `dux-qt-base.pc.in`: new, C entry points and pkg-config metadata.
 - `src/main.cpp`: calls `dqb_main`.
 - `src/build/build.hpp.in`: version macros read `PROJECT_VERSION`.
+- `src/crash/interface.cpp`: crash window names dux-qt-base.
 - `assets/`: removed.
 - `README.md`, `BUILD.md`, `Justfile`, `default.nix`, `.github/`,
   `distro/`: fork documentation, packaging, and CI.

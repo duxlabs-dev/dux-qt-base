@@ -1,17 +1,41 @@
-name: Crash Report (v1)
-description: Quickshell has crashed (old)
-labels: ["unactionable"]
+name: Crash report
+description: dux-qt-base or an app running on it has crashed
+labels: ["bug", "crash"]
 body:
-  - type: markdown
+  - type: textarea
+    id: userinfo
     attributes:
-      value: |
-        Thank you for taking the time to click the report button.
-        At this point most of the worst issues in 0.2.1 and before have been fixed and we are
-        preparing for a new release. Please do not submit this report.
-  - type: checkboxes
-    id: donotcheck
+      label: What caused the crash
+      description: |
+        Any information likely to help debug the crash. What were you doing when the crash occurred,
+        what changes did you make, can you get it to happen again?
+    validations:
+        required: true
+  - type: textarea
+    id: bt
     attributes:
-      label: Read the text above. Do not submit the report.
-      options:
-        - label: Yes I want this report to be deleted.
-          required: true
+      label: Backtrace
+      description: |
+        1. Run `coredumpctl debug dms`, or the name of the app that crashed.
+        2. Once it loads, type `bt -full` (then enter)
+        3. Copy the output and attach it as a file or in a spoiler.
+    validations:
+        required: true
+  - type: upload
+    id: report
+    attributes:
+      label: Report file
+      description: |
+        If a crash reporter window appeared, attach the `report.txt` from the crash report folder it shows.
+
+        Please ensure the report does not contain personal information,
+        as reports may contain detailed logs leading up to the crash.
+  - type: textarea
+    id: config
+    attributes:
+      label: Configuration
+      description: |
+        Attach or link your configuration here, preferrably in full (not just one file).
+        Compress it into a zip, tar, etc.
+
+        This will help us reproduce the crash ourselves.

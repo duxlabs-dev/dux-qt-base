@@ -10,7 +10,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(QS_BUILD_OPTIONS "")
 
 # should be changed for forks
-set(CRASHREPORT_URL "https://github.com/duxlabs-dev/dux-qt-base/issues/new" CACHE STRING "Bugreport URL")
+set(CRASHREPORT_URL "https://github.com/duxlabs-dev/dux-qt-base/issues/new?template=crash.yml" CACHE STRING "Bugreport URL")
 
 function(boption VAR NAME DEFAULT)
 	cmake_parse_arguments(PARSE_ARGV 3 arg "" "REQUIRES" "")

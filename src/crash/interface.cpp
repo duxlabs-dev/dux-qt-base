@@ -55,12 +55,12 @@ CrashReporterGui::CrashReporterGui(QString reportFolder, int pid)
 	auto qtVersionMatches = strcmp(qVersion(), QT_VERSION_STR) == 0;
 	if (qtVersionMatches) {
 		mainLayout->addWidget(new QLabel(
-		    "<u>Quickshell has crashed. Please submit a bug report to help us fix it.</u>",
+		    "<u>dux-qt-base has crashed. Please submit a bug report to help us fix it.</u>",
 		    this
 		));
 	} else {
 		mainLayout->addWidget(
-		    new QLabel("<u>Quickshell has crashed, likely due to a Qt version mismatch.</u>", this)
+		    new QLabel("<u>dux-qt-base has crashed, likely due to a Qt version mismatch.</u>", this)
 		);
 	}
 
@@ -83,7 +83,7 @@ CrashReporterGui::CrashReporterGui(QString reportFolder, int pid)
 		);
 	} else {
 		mainLayout->addWidget(new QLabel(
-		    "Please rebuild Quickshell against the current Qt version.\n"
+		    "Please rebuild dux-qt-base against the current Qt version.\n"
 		    "If this does not solve the problem, please open a bug report on the issue tracker."
 		));
 	}

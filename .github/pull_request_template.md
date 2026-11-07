@@ -1,5 +1,5 @@
 <!--
-Read https://github.com/quickshell-mirror/quickshell/blob/master/CONTRIBUTING.md before opening a PR.
+Read https://github.com/duxlabs-dev/dux-qt-base/blob/main/CONTRIBUTING.md before opening a PR.
 
 Failing to do so may result in a ban from opening PRs.
 -->
