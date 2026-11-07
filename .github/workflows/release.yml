@@ -75,6 +75,9 @@ jobs:
     steps:
       - name: Install dependencies
         run: |
+          # pacman's landlock download sandbox cannot be applied inside the job container
+          sed -i 's/^#\?DisableSandbox.*/DisableSandbox/' /etc/pacman.conf
+          grep -q '^DisableSandbox' /etc/pacman.conf || sed -i '/^\[options\]/a DisableSandbox' /etc/pacman.conf
           pacman -Syu --noconfirm --needed \
             git github-cli zstd cmake ninja pkgconf \
             qt6-base qt6-declarative qt6-wayland qt6-shadertools \
@@ -99,6 +102,8 @@ jobs:
             -DGIT_REVISION="$TAG"
           cmake --build build
           DESTDIR="$PWD/dest" cmake --install build
+          # makepkg strips at package time anyway; keep the asset small
+          find dest -name 'libdux-qt-base.so.*' -type f -exec strip --strip-unneeded {} +
 
       - name: Package
         id: package
