@@ -7,16 +7,11 @@
 
 #include <libdrm/drm_fourcc.h>
 #include <private/qquickwindow_p.h>
-#include <private/qsgcontext_p.h>
-#include <private/qsgrenderloop_p.h>
 #include <private/qwaylandabstractdecoration_p.h>
 #include <private/qwaylandbuffer_p.h>
 #include <private/qwaylanddisplay_p.h>
 #include <private/qwaylandwindow_p.h>
-#include <qabstractanimation.h>
-#include <qchronotimer.h>
 #include <qcoreevent.h>
-#include <qguiapplication.h>
 #include <qimage.h>
 #include <qlogging.h>
 #include <qloggingcategory.h>
@@ -31,7 +26,6 @@
 #include <qquickwindow.h>
 #include <qrect.h>
 #include <qregion.h>
-#include <qscreen.h>
 #include <qsize.h>
 #include <qstring.h>
 #include <qsurfaceformat.h>
@@ -43,6 +37,7 @@
 #include <rhi/qrhi_platform.h>
 #include <wayland-client-protocol.h>
 
+#include "../core/animationdriver.hpp"
 #include "../core/logcat.hpp"
 #include "../window/damage.hpp"
 #include "../window/proxywindow.hpp"
@@ -81,52 +76,6 @@ std::shared_ptr<QRhi> sharedRhi(const QSurfaceFormat& format) {
 
 	shared = result;
 	return result;
-}
-
-class AnimationTimer: public QChronoTimer {
-public:
-	explicit AnimationTimer(QAnimationDriver* driver): QChronoTimer(driver) {
-		this->setTimerType(Qt::PreciseTimer);
-		QObject::connect(this, &QChronoTimer::timeout, driver, &QAnimationDriver::advance);
-
-		auto* app = static_cast<QGuiApplication*>(QGuiApplication::instance()); // NOLINT
-		QObject::connect(app, &QGuiApplication::screenAdded, this, &AnimationTimer::onScreenAdded);
-		QObject::connect(app, &QGuiApplication::screenRemoved, this, &AnimationTimer::updateInterval);
-		for (auto* screen: QGuiApplication::screens()) this->onScreenAdded(screen);
-	}
-
-private:
-	void onScreenAdded(QScreen* screen) {
-		QObject::connect(screen, &QScreen::refreshRateChanged, this, &AnimationTimer::updateInterval);
-		this->updateInterval();
-	}
-
-	// The driver advances by wall time, so slower screens skip ticks instead of lagging.
-	void updateInterval() {
-		auto refreshRate = 60.0;
-		for (auto* screen: QGuiApplication::screens()) {
-			refreshRate = std::max(refreshRate, screen->refreshRate());
-		}
-
-		auto interval = std::chrono::duration<double>(1 / refreshRate);
-		this->setInterval(std::chrono::round<std::chrono::nanoseconds>(interval));
-	}
-};
-
-// Drive animations without Qt-owned windows; see QSGThreadedRenderLoop::polishAndSync().
-void driveAnimations() {
-	static auto installed = false;
-	if (installed) return;
-	installed = true;
-
-	auto* loop = QSGRenderLoop::instance();
-	auto* driver = loop->animationDriver();
-	if (!driver || loop->sceneGraphContext()->isVSyncDependent(driver)) return;
-
-	auto* timer = new AnimationTimer(driver);
-	QObject::connect(driver, &QAnimationDriver::started, timer, &QChronoTimer::start);
-	QObject::connect(driver, &QAnimationDriver::stopped, timer, &QChronoTimer::stop);
-	if (driver->isRunning()) timer->start();
 }
 
 // Borrow the wl_buffer for one commit; SurfaceBufferPool owns it and handles releases.
@@ -277,7 +226,7 @@ void WaylandRenderControl::requestCommit() {
 	this->scheduleFrame();
 }
 
-// renderFrame() syncs polish changes in the current frame.
+// renderFrame() syncs animation and polish changes in the current frame.
 void WaylandRenderControl::scheduleFrame() {
 	if (!this->polishing) this->window()->requestUpdate();
 }
@@ -336,7 +285,6 @@ bool WaylandRenderControl::eventFilter(QObject* watched, QEvent* event) {
 
 bool WaylandRenderControl::initializeScene() {
 	auto* window = this->window();
-	driveAnimations();
 
 	// Connect the tracker before QQuickRenderControl::initialize() emits sceneGraphInitialized.
 	auto* base = qobject_cast<QsQuickWindowBase*>(window);
@@ -377,13 +325,14 @@ void WaylandRenderControl::renderFrame() {
 	if (!waylandWindow) return;
 
 	// The pixel needs neither the scene graph nor dmabuf formats.
-	auto inputOnly = this->inputOnly(waylandWindow);
+	const auto inputOnly = this->inputOnly(waylandWindow);
 	if (!inputOnly && !this->rhi && !this->initializeScene()) return;
 	if (!inputOnly && !buffer::WlBufferManager::instance()->isReady()) return;
 	// A window that showed the pixel renders its whole scene again.
 	if (!inputOnly && std::exchange(this->pixelAttached, false)) this->repaintRequested = true;
 
 	this->polishing = true;
+	qs::core::FrameAnimationDriver::advanceFrame();
 	this->polishItems();
 	this->polishing = false;
 

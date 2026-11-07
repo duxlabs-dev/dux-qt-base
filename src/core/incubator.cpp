@@ -13,6 +13,7 @@
 #include <qscreen.h>
 #include <qtmetamacros.h>
 
+#include "animationdriver.hpp"
 #include "logcat.hpp"
 
 QS_LOGGING_CATEGORY(logIncubator, "quickshell.incubator", QtWarningMsg);
@@ -52,7 +53,8 @@ void QsIncubationController::initLoop() {
 	    &QsIncubationController::incubate
 	);
 
-	QAnimationDriver* animationDriver = this->renderLoop->animationDriver();
+	QAnimationDriver* animationDriver = qs::core::FrameAnimationDriver::instance();
+	if (!animationDriver) animationDriver = this->renderLoop->animationDriver();
 	if (animationDriver) {
 		QObject::connect(
 		    animationDriver,

@@ -7,6 +7,7 @@
 #include <qsgrendererinterface.h>
 #include <qwindow.h>
 
+#include "../core/animationdriver.hpp"
 #include "../core/logcat.hpp"
 
 namespace qs::window {
@@ -17,7 +18,10 @@ WindowRenderControl* (*FACTORY)() = nullptr; // NOLINT
 bool ENABLED = false;                        // NOLINT
 } // namespace
 
-void WindowRenderControl::setEnabled(bool enabled) { ENABLED = enabled; }
+void WindowRenderControl::setEnabled(bool enabled) {
+	ENABLED = enabled;
+	if (enabled) qs::core::FrameAnimationDriver::install();
+}
 void WindowRenderControl::setFactory(WindowRenderControl* (*factory)()) { FACTORY = factory; }
 
 WindowRenderControl* WindowRenderControl::create() {
