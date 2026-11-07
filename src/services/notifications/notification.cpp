@@ -6,6 +6,7 @@
 #include <qlogging.h>
 #include <qloggingcategory.h>
 #include <qobject.h>
+#include <qpointer.h>
 #include <qproperty.h>
 #include <qtmetamacros.h>
 #include <qtypes.h>
@@ -15,6 +16,10 @@
 #include "../../core/logcat.hpp"
 #include "dbusimage.hpp"
 #include "server.hpp"
+
+#ifdef QS_WAYLAND
+#include "../../wayland/activation.hpp"
+#endif
 
 namespace qs::service::notifications {
 
@@ -48,11 +53,35 @@ void NotificationAction::invoke() {
 		return;
 	}
 
-	NotificationServer::instance()->ActionInvoked(this->notification->id(), this->mIdentifier);
+	auto send = [id = this->notification->id(),
+	             identifier = this->mIdentifier,
+	             notification = QPointer(this->notification)](const QString& token) {
+		auto* server = NotificationServer::instance();
+		if (!token.isEmpty()) emit server->ActivationToken(id, token);
+		emit server->ActionInvoked(id, identifier);
+		if (notification) notification->finishActivation();
+	};
 
-	if (!this->notification->bindableResident().value()) {
-		this->notification->close(NotificationCloseReason::Dismissed);
+	this->notification->beginActivation();
+#ifdef QS_WAYLAND
+	if (qs::wayland::activation::requestActivationToken(send)) return;
+#endif
+	send({});
+}
+
+void Notification::beginActivation() { ++this->pendingActivations; }
+
+void Notification::finishActivation() {
+	if (--this->pendingActivations > 0 || this->isRetained()) return;
+
+	if (this->deferredClose) {
+		auto reason = *this->deferredClose;
+		this->deferredClose.reset();
+		this->close(reason);
+		return;
 	}
+
+	if (!this->bindableResident().value()) this->close(NotificationCloseReason::Dismissed);
 }
 
 void NotificationAction::setText(const QString& text) {
@@ -68,6 +97,12 @@ void Notification::dismiss() { this->close(NotificationCloseReason::Dismissed); 
 void Notification::close(NotificationCloseReason::Enum reason) {
 	if (this->isRetained()) {
 		qCritical() << "Cannot close destroyed notification" << this;
+		return;
+	}
+
+	// closing mid token request would put NotificationClosed before ActionInvoked, which glib drops
+	if (this->pendingActivations > 0) {
+		this->deferredClose = reason;
 		return;
 	}
 

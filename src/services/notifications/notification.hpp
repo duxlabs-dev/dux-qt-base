@@ -1,5 +1,6 @@
 #pragma once
 
+#include <optional>
 #include <utility>
 
 #include <qcontainerfwd.h>
@@ -180,6 +181,8 @@ public:
 
 	[[nodiscard]] NotificationCloseReason::Enum closeReason() const;
 	void setTracked(bool tracked);
+	void beginActivation();
+	void finishActivation();
 
 signals:
 	/// Sent when a notification has been closed.
@@ -207,6 +210,8 @@ signals:
 private:
 	quint32 mId;
 	NotificationCloseReason::Enum mCloseReason = NotificationCloseReason::Dismissed;
+	std::optional<NotificationCloseReason::Enum> deferredClose;
+	quint32 pendingActivations = 0;
 	bool mLastGeneration = false;
 	NotificationImage mImagePixmap;
 	QList<NotificationAction*> mActions;
