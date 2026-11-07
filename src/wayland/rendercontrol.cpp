@@ -331,8 +331,9 @@ void WaylandRenderControl::renderFrame() {
 	// A window that showed the pixel renders its whole scene again.
 	if (!inputOnly && std::exchange(this->pixelAttached, false)) this->repaintRequested = true;
 
+	// Changes made here land in this frame; the next tick needs its own frame request below.
 	this->polishing = true;
-	qs::core::FrameAnimationDriver::advanceFrame();
+	const auto animating = qs::core::FrameAnimationDriver::advanceFrame();
 	this->polishItems();
 	this->polishing = false;
 
@@ -418,6 +419,8 @@ void WaylandRenderControl::renderFrame() {
 	auto ref = WlBufferRef(buffer->buffer->buffer(), surfaceSize);
 	waylandWindow->safeCommit(&ref, damage.value_or(QRect(QPoint(), surfaceSize)));
 	QQuickWindowPrivate::get(window)->fireFrameSwapped();
+	// Only a committed buffer brings a frame callback; an unchanged window waits for the fallback instead of polling.
+	if (animating) this->scheduleFrame();
 	// Keep the damage until safeCommit() accepts a buffer.
 	if (!ref.busy()) return;
 

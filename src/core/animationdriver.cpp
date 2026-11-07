@@ -28,8 +28,10 @@ void FrameAnimationDriver::install() {
 
 FrameAnimationDriver* FrameAnimationDriver::instance() { return DRIVER; }
 
-void FrameAnimationDriver::advanceFrame() {
-	if (DRIVER && DRIVER->isRunning()) DRIVER->advance();
+bool FrameAnimationDriver::advanceFrame() {
+	if (!DRIVER || !DRIVER->isRunning()) return false;
+	DRIVER->advance();
+	return DRIVER->isRunning();
 }
 
 FrameAnimationDriver::FrameAnimationDriver() {

@@ -23,7 +23,8 @@ public:
 	static void install();
 	static FrameAnimationDriver* instance();
 	// Called before a window polishes, so its frame samples animation time at its own vblank.
-	static void advanceFrame();
+	// Returns whether animations still run, so the window schedules the frame that samples the next tick.
+	static bool advanceFrame();
 
 	void advance() override;
 
