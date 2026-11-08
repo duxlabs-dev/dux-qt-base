@@ -13,8 +13,8 @@ executable: consumers link `libdux-qt-base.so` and call `dqb_main()` from
 - `<prefix>/include/dux-qt-base/dux_qt_base.h`
 
 QML modules are compiled into the library. No QML, desktop, or icon files land
-on disk. The configure-time warning that QML modules will not be installed is
-expected; leave `INSTALL_QML_PREFIX` and `INSTALL_QMLDIR` unset.
+on disk. Drop any `INSTALL_QML_PREFIX` or `INSTALL_QMLDIR` flags carried over
+from a quickshell recipe, they no longer do anything.
 
 Split packages as runtime (`.so.0`, `.so.0.3.2`) and dev (`.so` symlink, `.pc`,
 header). Ready-made recipes live in `distro/` (arch, fedora, opensuse, debian,

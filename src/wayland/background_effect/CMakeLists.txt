@@ -12,8 +12,6 @@ qt_add_qml_module(quickshell-wayland-background-effect
 
 qs_add_module_deps_light(quickshell-wayland-background-effect quickshell-core)
 
-install_qml_module(quickshell-wayland-background-effect)
-
 wl_proto(wlp-background-effect ext-background-effect-v1 "${WAYLAND_PROTOCOLS}/staging/ext-background-effect")
 
 target_link_libraries(quickshell-wayland-background-effect PRIVATE

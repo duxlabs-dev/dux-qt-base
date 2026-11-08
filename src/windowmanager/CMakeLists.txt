@@ -12,8 +12,6 @@ qt_add_qml_module(quickshell-windowmanager
 
 qs_add_module_deps_light(quickshell-windowmanager quickshell-core)
 
-install_qml_module(quickshell-windowmanager)
-
 qs_module_pch(quickshell-windowmanager SET large)
 
 target_link_libraries(quickshell-windowmanager PRIVATE Qt::Quick)

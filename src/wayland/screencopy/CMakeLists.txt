@@ -9,8 +9,6 @@ qt_add_qml_module(quickshell-wayland-screencopy
 	DEPENDENCIES QtQuick
 )
 
-install_qml_module(quickshell-wayland-screencopy)
-
 set(SCREENCOPY_MODULES)
 
 if (SCREENCOPY_ICC)

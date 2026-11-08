@@ -81,7 +81,6 @@ boption(SERVICE_NOTIFICATIONS "Notifications" ON)
 boption(BLUETOOTH "Bluetooth" ON)
 boption(NETWORK "Network" ON)
 
-include(cmake/install-qml-module.cmake)
 include(cmake/util.cmake)
 
 add_compile_options(-Wall -Wextra -Wno-vla-cxx-extension)

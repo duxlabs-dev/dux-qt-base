@@ -19,8 +19,6 @@ qt_add_qml_module(quickshell-service-polkit
 	DEPENDENCIES QtQml
 )
 
-install_qml_module(quickshell-service-polkit)
-
 target_link_libraries(quickshell-service-polkit PRIVATE
 	Qt::Qml
 	Qt::Quick

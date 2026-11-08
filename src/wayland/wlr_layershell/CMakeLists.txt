@@ -15,8 +15,6 @@ qs_add_module_deps_light(quickshell-wayland-layershell
 	URIS Quickshell.Wayland
 )
 
-install_qml_module(quickshell-wayland-layershell)
-
 wl_proto(wlp-layer-shell wlr-layer-shell-unstable-v1 "${CMAKE_CURRENT_SOURCE_DIR}")
 
 # link dependency of wlr-layer-shell's codegen

@@ -31,7 +31,6 @@ qt_add_qml_module(quickshell-hyprland
 )
 
 qs_add_module_deps_light(quickshell-hyprland quickshell-core)
-install_qml_module(quickshell-hyprland)
 
 # intentionally no pch as the module is empty
 

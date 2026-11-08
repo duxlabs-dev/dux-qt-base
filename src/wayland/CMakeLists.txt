@@ -169,8 +169,6 @@ qt_add_qml_module(quickshell-wayland
 
 qs_add_module_deps_light(quickshell-wayland quickshell-core)
 
-install_qml_module(quickshell-wayland)
-
 qs_module_pch(quickshell-wayland SET large)
 
 target_link_libraries(quickshell PRIVATE quickshell-waylandplugin quickshell-wayland-init)

@@ -15,8 +15,6 @@ qt_add_qml_module(quickshell-i3
 	IMPORTS ${I3_MODULES}
 )
 
-install_qml_module(quickshell-i3)
-
 qs_pch(quickshell-i3)
 qs_pch(quickshell-i3plugin)
 

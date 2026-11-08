@@ -36,8 +36,6 @@ qt_add_qml_module(quickshell-service-upower
 
 qs_add_module_deps_light(quickshell-service-upower quickshell-core)
 
-install_qml_module(quickshell-service-upower)
-
 target_link_libraries(quickshell-service-upower PRIVATE Qt::Qml Qt::DBus)
 qs_add_link_dependencies(quickshell-service-upower quickshell-dbus)
 target_link_libraries(quickshell PRIVATE quickshell-service-upowerplugin)

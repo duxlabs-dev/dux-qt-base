@@ -15,8 +15,6 @@ qt_add_qml_module(quickshell-i3-ipc
 
 qs_add_module_deps_light(quickshell-i3-ipc quickshell-core)
 
-install_qml_module(quickshell-i3-ipc)
-
 target_link_libraries(quickshell-i3-ipc PRIVATE Qt::Quick quickshell-core)
 
 qs_module_pch(quickshell-i3-ipc SET large)

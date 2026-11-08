@@ -16,8 +16,6 @@ qt_add_qml_module(quickshell-window
 
 qs_add_module_deps_light(quickshell-window quickshell-core)
 
-install_qml_module(quickshell-window)
-
 add_library(quickshell-window-init OBJECT init.cpp)
 
 target_link_libraries(quickshell-window PRIVATE

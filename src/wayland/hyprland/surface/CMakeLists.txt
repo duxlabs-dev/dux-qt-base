@@ -12,8 +12,6 @@ qt_add_qml_module(quickshell-hyprland-surface-extensions
 
 qs_add_module_deps_light(quickshell-hyprland-surface-extensions quickshell-core)
 
-install_qml_module(quickshell-hyprland-surface-extensions)
-
 wl_proto(wlp-hyprland-surface hyprland-surface-v1 "${CMAKE_CURRENT_SOURCE_DIR}")
 
 target_link_libraries(quickshell-hyprland-surface-extensions PRIVATE

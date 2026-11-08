@@ -32,8 +32,6 @@ qt6_add_shaders(quickshell-widgets "widgets-cliprect-ub"
 	DEFINES CONTENT_UNDER_BORDER
 )
 
-install_qml_module(quickshell-widgets)
-
 qs_module_pch(quickshell-widgets)
 
 target_link_libraries(quickshell-widgets PRIVATE Qt::Quick)

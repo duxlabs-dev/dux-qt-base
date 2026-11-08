@@ -31,8 +31,6 @@ qt_add_qml_module(quickshell-bluetooth
 
 qs_add_module_deps_light(quickshell-bluetooth quickshell-core)
 
-install_qml_module(quickshell-bluetooth)
-
 # dbus headers
 target_include_directories(quickshell-bluetooth PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
 

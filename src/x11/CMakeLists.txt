@@ -13,8 +13,6 @@ qt_add_qml_module(quickshell-x11
 
 qs_add_module_deps_light(quickshell-x11 quickshell-core quickshell-window)
 
-install_qml_module(quickshell-x11)
-
 add_library(quickshell-x11-init OBJECT init.cpp)
 
 target_link_libraries(quickshell-x11 PRIVATE Qt::Quick ${XCB_LIBRARIES})

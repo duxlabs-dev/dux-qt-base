@@ -22,8 +22,6 @@ qt_add_qml_module(quickshell-dbusmenu
 
 qs_add_module_deps_light(quickshell-dbusmenu quickshell-core)
 
-install_qml_module(quickshell-dbusmenu)
-
 # dbus headers
 target_include_directories(quickshell-dbusmenu PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
 

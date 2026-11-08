@@ -12,8 +12,6 @@ qt_add_qml_module(quickshell-hyprland-focus-grab
 
 qs_add_module_deps_light(quickshell-hyprland-focus-grab quickshell-core)
 
-install_qml_module(quickshell-hyprland-focus-grab)
-
 wl_proto(wlp-hyprland-focus-grab hyprland-focus-grab-v1 "${CMAKE_CURRENT_SOURCE_DIR}")
 
 target_link_libraries(quickshell-hyprland-focus-grab PRIVATE

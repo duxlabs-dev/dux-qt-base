@@ -14,8 +14,6 @@ qs_add_module_deps_light(quickshell-wayland-toplevel-management
 	URIS Quickshell.Wayland
 )
 
-install_qml_module(quickshell-wayland-toplevel-management)
-
 wl_proto(wlp-foreign-toplevel wlr-foreign-toplevel-management-unstable-v1 "${CMAKE_CURRENT_SOURCE_DIR}")
 
 target_link_libraries(quickshell-wayland-toplevel-management PRIVATE

@@ -9,8 +9,6 @@ qt_add_qml_module(quickshell-wayland-shortcuts-inhibit
 	DEPENDENCIES QtQuick
 )
 
-install_qml_module(quickshell-wayland-shortcuts-inhibit)
-
 qs_add_module_deps_light(quickshell-wayland-shortcuts-inhibit quickshell-core)
 
 wl_proto(wlp-shortcuts-inhibit keyboard-shortcuts-inhibit-unstable-v1 "${WAYLAND_PROTOCOLS}/unstable/keyboard-shortcuts-inhibit")
