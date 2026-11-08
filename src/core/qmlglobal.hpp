@@ -183,6 +183,10 @@ public:
 
 	/// Returns the string value of an environment variable or null if it is not set.
 	Q_INVOKABLE QVariant env(const QString& variable);
+	/// Returns `[dd, dv, vd, vv]`, which advance a damped spring's displacement and velocity by `seconds`:
+	/// `displacement' = dd * displacement + dv * velocity`, `velocity' = vd * displacement + vv * velocity`.
+	Q_INVOKABLE static QVariantList
+	springCoefficients(double stiffness, double damping, double mass, double seconds);
 
 	// MUST be before execDetached(ctx) or the other will be called with a default constructed obj.
 	QSDOC_HIDE Q_INVOKABLE static void execDetached(QList<QString> command);

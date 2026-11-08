@@ -26,6 +26,7 @@
 #include <qloggingcategory.h>
 #include <qmap.h>
 #include <qmatrix4x4.h>
+#include <qnamespace.h>
 #include <qobject.h>
 #include <qpoint.h>
 #include <qquickwindow.h>
@@ -531,8 +532,8 @@ WindowDamageTracker::WindowDamageTracker(QsQuickWindowBase* window)
     : QObject(window)
     , window(window) {
 	// clang-format off
-	QObject::connect(window, &QQuickWindow::sceneGraphInitialized, this, &WindowDamageTracker::initialize);
-	QObject::connect(window, &QQuickWindow::sceneGraphInvalidated, this, &WindowDamageTracker::invalidate);
+	QObject::connect(window, &QQuickWindow::sceneGraphInitialized, this, &WindowDamageTracker::initialize, Qt::DirectConnection);
+	QObject::connect(window, &QQuickWindow::sceneGraphInvalidated, this, &WindowDamageTracker::invalidate, Qt::DirectConnection);
 	// Force a full frame when shown again; see sync().
 	QObject::connect(window, &QWindow::visibleChanged, this, &WindowDamageTracker::invalidateFrame);
 	// clang-format on
@@ -544,8 +545,8 @@ void WindowDamageTracker::initialize() {
 	this->tracker = std::make_unique<SceneDamageTracker>();
 
 	// clang-format off
-	QObject::connect(this->window, &QQuickWindow::beforeSynchronizing, this, &WindowDamageTracker::sync);
-	QObject::connect(this->window, &QQuickWindow::afterSynchronizing, this, &WindowDamageTracker::afterSync);
+	QObject::connect(this->window, &QQuickWindow::beforeSynchronizing, this, &WindowDamageTracker::sync, Qt::DirectConnection);
+	QObject::connect(this->window, &QQuickWindow::afterSynchronizing, this, &WindowDamageTracker::afterSync, Qt::DirectConnection);
 	// clang-format on
 }
 
@@ -567,7 +568,7 @@ void WindowDamageTracker::sync() {
 	    this->window->size(),
 	    this->window->effectiveDevicePixelRatio(),
 	    this->window->color(),
-	    std::exchange(this->invalidated, false) || priv->pendingFontUpdate
+	    this->invalidated.exchange(false) || priv->pendingFontUpdate
 	        || !this->window->frameMargins().isNull() || !priv->visualizationMode.isEmpty()
 	);
 }

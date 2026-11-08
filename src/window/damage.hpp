@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <memory>
 #include <optional>
 
@@ -41,7 +42,7 @@ private slots:
 private:
 	QsQuickWindowBase* window;
 	std::unique_ptr<SceneDamageTracker> tracker;
-	bool invalidated = false;
+	std::atomic_bool invalidated = false;
 	bool externalRendering = false;
 	bool loggedExternalRendering = false;
 };

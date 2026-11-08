@@ -54,6 +54,20 @@ init objects, system libs) so `go build` with
 dependency. cgo rejects `-Wl,--export-dynamic-symbol`, which the wayland
 null-proxy guard needs, so set `CGO_LDFLAGS_ALLOW='-Wl,--export-dynamic-symbol=.*'`.
 
+## Rendering
+
+With render control enabled, windows share one render thread and graphics
+device. `QS_RENDER_THREAD=0` runs that work on the GUI thread instead.
+
+Set `QS_FRAME_TRACE=1` and
+`QT_LOGGING_RULES='quickshell.wayland.rendercontrol.frame.debug=true;quickshell.wayland.rendercontrol.presentation.debug=true'`
+to log CPU polish, sync and render times, buffer allocations, and compositor
+presentation feedback. Frame serials join the two logs. Presentation records
+include the refresh interval and elapsed time from the frame request and last
+input event. Input timing covers events delivered to that window. These are
+CPU and presentation timings, not GPU execution times. Compositors without
+`wp_presentation` only produce the CPU log.
+
 ## License
 
 LGPL-3.0-only, see [LICENSE](LICENSE) and [LICENSE-GPL](LICENSE-GPL).

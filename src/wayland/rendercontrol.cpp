@@ -12,6 +12,7 @@
 #include <private/qwaylanddisplay_p.h>
 #include <private/qwaylandwindow_p.h>
 #include <qcoreevent.h>
+#include <qelapsedtimer.h>
 #include <qimage.h>
 #include <qlogging.h>
 #include <qloggingcategory.h>
@@ -26,6 +27,8 @@
 #include <qquickwindow.h>
 #include <qrect.h>
 #include <qregion.h>
+#include <qscopeguard.h>
+#include <qsemaphore.h>
 #include <qsize.h>
 #include <qstring.h>
 #include <qsurfaceformat.h>
@@ -44,6 +47,8 @@
 #include "../window/rendercontrol.hpp"
 #include "buffer/manager.hpp"
 #include "buffer/shm.hpp"
+#include "presentation.hpp"
+#include "renderthread.hpp"
 
 namespace qs::wayland::render {
 
@@ -52,31 +57,9 @@ namespace {
 QS_LOGGING_CATEGORY(logRenderControl, "quickshell.wayland.rendercontrol", QtWarningMsg);
 
 constexpr qsizetype MAX_BUFFERS = 3;
+quint64 FRAME_SERIAL = 0; // NOLINT
 
-// Keep the context offscreen; leave the window out of the init params.
-std::shared_ptr<QRhi> sharedRhi(const QSurfaceFormat& format) {
-	static std::weak_ptr<QRhi> shared;
-	if (auto rhi = shared.lock()) return rhi;
-
-	auto* surface = QRhiGles2InitParams::newFallbackSurface(format);
-	QRhiGles2InitParams params;
-	params.format = format;
-	params.fallbackSurface = surface;
-
-	auto* rhi = QRhi::create(QRhi::OpenGLES2, &params);
-	if (!rhi) {
-		delete surface;
-		return nullptr;
-	}
-
-	auto result = std::shared_ptr<QRhi>(rhi, [surface](QRhi* rhi) {
-		delete rhi;
-		delete surface;
-	});
-
-	shared = result;
-	return result;
-}
+QS_LOGGING_CATEGORY(logFrame, "quickshell.wayland.rendercontrol.frame", QtWarningMsg);
 
 // Borrow the wl_buffer for one commit; SurfaceBufferPool owns it and handles releases.
 class WlBufferRef: public QtWaylandClient::QWaylandBuffer {
@@ -102,7 +85,7 @@ qs::window::WindowRenderControl* createRenderControl() {
 
 } // namespace
 
-SurfaceBuffer::~SurfaceBuffer() = default;
+SurfaceBuffer::~SurfaceBuffer() { this->pool->control->releaseBuffer(this); }
 
 const wl_buffer_listener SurfaceBufferPool::LISTENER = {.release = &SurfaceBufferPool::onRelease};
 
@@ -112,7 +95,7 @@ void SurfaceBufferPool::onRelease(void* data, wl_buffer* /*buffer*/) {
 	buffer->pool->control->onBufferReleased();
 }
 
-SurfaceBuffer* SurfaceBufferPool::acquire(QQuickWindow* window, QRhi* rhi, QSize size, bool alpha) {
+SurfaceBuffer* SurfaceBufferPool::acquire(QSize size, bool alpha) {
 	auto matches = [&](const std::unique_ptr<SurfaceBuffer>& buffer) {
 		return buffer->size == size && buffer->alpha == alpha;
 	};
@@ -128,35 +111,34 @@ SurfaceBuffer* SurfaceBufferPool::acquire(QQuickWindow* window, QRhi* rhi, QSize
 		return this->current;
 	}
 
-	this->current = this->create(window, rhi, size, alpha);
+	this->current = this->create(size, alpha);
 	return this->current;
 }
 
 void SurfaceBufferPool::clear() {
 	this->current = nullptr;
 	this->buffers.clear();
-	this->depthStencil.reset();
+	this->control->releaseDepthStencil(this->depthStencil);
 }
 
 bool SurfaceBufferPool::trim() {
 	auto idle = [this](const auto& buffer) { return buffer.get() != this->current && !buffer->busy; };
 	auto dropped = std::erase_if(this->buffers, idle) != 0;
-	if (this->buffers.empty()) this->depthStencil.reset();
+	if (this->buffers.empty()) this->control->releaseDepthStencil(this->depthStencil);
 	return dropped;
 }
 
 bool SurfaceBufferPool::available(QSize size, bool alpha) const {
 	auto used = 0;
 	for (const auto& buffer: this->buffers) {
-		if (buffer->size != size || buffer->alpha != alpha) continue;
-		if (!buffer->busy) return true;
-		used++;
+		if (!buffer->busy && buffer->size == size && buffer->alpha == alpha) return true;
+		if (buffer->busy) used++;
 	}
 
 	return used < MAX_BUFFERS;
 }
 
-SurfaceBuffer* SurfaceBufferPool::create(QQuickWindow* window, QRhi* rhi, QSize size, bool alpha) {
+SurfaceBuffer* SurfaceBufferPool::create(QSize size, bool alpha) {
 	buffer::WlBufferRequest request;
 	request.width = size.width();
 	request.height = size.height();
@@ -172,31 +154,38 @@ SurfaceBuffer* SurfaceBufferPool::create(QQuickWindow* window, QRhi* rhi, QSize 
 	if (!result->buffer) return nullptr;
 	wl_buffer_add_listener(result->buffer->buffer(), &LISTENER, result.get());
 
-	result->import.reset(result->buffer->createQsgTexture(window));
-	if (!result->import) return nullptr;
+	qCDebug(logFrame) << "allocate" << size;
+	return this->buffers.emplace_back(std::move(result)).get();
+}
 
-	auto native = result->import->texture()->rhiTexture()->nativeTexture();
-	result->texture.reset(rhi->newTexture(QRhiTexture::RGBA8, size, 1, QRhiTexture::RenderTarget));
-	if (!result->texture->createFrom({.object = native.object, .layout = 0})) return nullptr;
+bool SurfaceBufferPool::prepare(QQuickWindow* window, QRhi* rhi, SurfaceBuffer* buffer) {
+	if (buffer->renderTarget) return true;
+	const auto size = buffer->size;
+	buffer->import.reset(buffer->buffer->createQsgTexture(window));
+	if (!buffer->import) return false;
+
+	const auto native = buffer->import->texture()->rhiTexture()->nativeTexture();
+	buffer->texture.reset(rhi->newTexture(QRhiTexture::RGBA8, size, 1, QRhiTexture::RenderTarget));
+	if (!buffer->texture->createFrom({.object = native.object, .layout = 0})) return false;
 
 	if (!this->depthStencil || this->depthStencil->pixelSize() != size) {
 		this->depthStencil.reset(rhi->newRenderBuffer(QRhiRenderBuffer::DepthStencil, size));
 		if (!this->depthStencil->create()) {
 			this->depthStencil.reset();
-			return nullptr;
+			return false;
 		}
 	}
 
-	result->depthStencil = this->depthStencil;
+	buffer->depthStencil = this->depthStencil;
 
-	auto description = QRhiTextureRenderTargetDescription(QRhiColorAttachment(result->texture.get()));
-	description.setDepthStencilBuffer(result->depthStencil.get());
-	result->renderTarget.reset(rhi->newTextureRenderTarget(description));
-	result->renderPass.reset(result->renderTarget->newCompatibleRenderPassDescriptor());
-	result->renderTarget->setRenderPassDescriptor(result->renderPass.get());
-	if (!result->renderTarget->create()) return nullptr;
-
-	return this->buffers.emplace_back(std::move(result)).get();
+	auto description = QRhiTextureRenderTargetDescription(QRhiColorAttachment(buffer->texture.get()));
+	description.setDepthStencilBuffer(buffer->depthStencil.get());
+	buffer->renderTarget.reset(rhi->newTextureRenderTarget(description));
+	buffer->renderPass.reset(buffer->renderTarget->newCompatibleRenderPassDescriptor());
+	buffer->renderTarget->setRenderPassDescriptor(buffer->renderPass.get());
+	if (buffer->renderTarget->create()) return true;
+	buffer->renderTarget.reset();
+	return false;
 }
 
 WaylandRenderControl::WaylandRenderControl(): pool(this) {
@@ -211,24 +200,52 @@ WaylandRenderControl::WaylandRenderControl(): pool(this) {
 }
 
 WaylandRenderControl::~WaylandRenderControl() {
-	if (!this->rhi) return;
+	if (!this->renderThread || !this->rhi) return;
 
-	// Keep the context current through texture and scene graph cleanup.
-	this->rhi->makeThreadLocalNativeContextCurrent();
+	this->renderThread->invoke([this] {
+		this->rhi->makeThreadLocalNativeContextCurrent();
+		// Invalidate before releasing rhi; QQuickRenderControl::~QQuickRenderControl() is too late.
+		this->invalidate();
+		this->decoration.reset();
+		this->prepareThread(this->thread());
+	});
 	this->pool.clear();
-	this->decoration.reset();
-	// Invalidate before releasing rhi; QQuickRenderControl::~QQuickRenderControl() is too late.
-	this->invalidate();
+}
+
+void WaylandRenderControl::releaseBuffer(SurfaceBuffer* buffer) {
+	if (!this->renderThread) return;
+	this->renderThread->invoke([this, buffer] {
+		// WlDmaBufferQSGTexture's destructor needs the current context.
+		if (this->rhi) this->rhi->makeThreadLocalNativeContextCurrent();
+		buffer->renderTarget.reset();
+		buffer->renderPass.reset();
+		buffer->depthStencil.reset();
+		buffer->texture.reset();
+		buffer->import.reset();
+	});
+}
+
+void WaylandRenderControl::releaseDepthStencil(std::shared_ptr<QRhiRenderBuffer>& buffer) {
+	if (!this->renderThread) return;
+	this->renderThread->invoke([&buffer] { buffer.reset(); });
 }
 
 void WaylandRenderControl::requestCommit() {
 	this->commitRequested = true;
+	++this->commitRevision;
 	this->scheduleFrame();
 }
 
 // renderFrame() syncs animation and polish changes in the current frame.
 void WaylandRenderControl::scheduleFrame() {
-	if (!this->polishing) this->window()->requestUpdate();
+	if (this->presentation && !this->requestedAt) this->requestedAt = PresentationTracker::now();
+	if (this->polishing) return;
+	if (this->frameInFlight) {
+		this->frameRequested = true;
+		return;
+	}
+	qs::core::FrameAnimationDriver::requestFrame(this->window());
+	this->window()->requestUpdate();
 }
 
 // Explicit repaint requests bypass the damage check in renderFrame().
@@ -245,24 +262,36 @@ void WaylandRenderControl::onBufferReleased() {
 void WaylandRenderControl::trimBuffers() {
 	// Hidden before the first frame.
 	if (!this->rhi) return;
-	// WlDmaBufferQSGTexture's destructor needs the current context.
-	if (!this->rhi->makeThreadLocalNativeContextCurrent()) return;
+	if (this->frameInFlight) {
+		this->trimTimer.start();
+		return;
+	}
 	if (!this->pool.trim()) return;
 
 	// QRhiGles2 frees released GL objects in beginOffscreenFrame(), see executeDeferredReleases().
-	QRhiCommandBuffer* commands = nullptr;
-	if (this->rhi->beginOffscreenFrame(&commands) != QRhi::FrameOpSuccess) return;
-	this->rhi->endOffscreenFrame();
+	this->renderThread->invoke([this] {
+		QRhiCommandBuffer* commands = nullptr;
+		if (this->rhi->beginOffscreenFrame(&commands) != QRhi::FrameOpSuccess) return;
+		this->rhi->endOffscreenFrame();
+	});
 }
 
 bool WaylandRenderControl::eventFilter(QObject* watched, QEvent* event) {
 	if (watched != this->window()) return false;
 
 	switch (event->type()) {
+	case QEvent::KeyPress:
+	case QEvent::MouseButtonPress:
+	case QEvent::MouseMove:
+	case QEvent::Wheel:
+	case QEvent::TouchBegin:
+		if (this->presentation) this->inputAt = PresentationTracker::now();
+		break;
 	case QEvent::UpdateRequest: this->renderFrame(); break;
 	case QEvent::Expose:
 		if (!this->window()->isExposed()) {
 			this->presented = false;
+			qs::core::FrameAnimationDriver::cancelFrame(this->window());
 			// The compositor releases the attached buffer after the unmap; trim it with the rest.
 			this->pool.forget();
 			this->trimTimer.start();
@@ -270,6 +299,7 @@ bool WaylandRenderControl::eventFilter(QObject* watched, QEvent* event) {
 		}
 		// Commit surface state even if renderFrame() finds no damage.
 		this->commitRequested = true;
+		++this->commitRevision;
 		// Deliver any update left pending while the window was unexposed.
 		if (this->window()->handle()->hasPendingUpdateRequest()) {
 			this->window()->handle()->deliverUpdateRequest();
@@ -288,15 +318,33 @@ bool WaylandRenderControl::initializeScene() {
 
 	// Connect the tracker before QQuickRenderControl::initialize() emits sceneGraphInitialized.
 	auto* base = qobject_cast<QsQuickWindowBase*>(window);
-	if (!this->tracker && base) {
-		this->tracker = new qs::window::WindowDamageTracker(base);
+	if (!this->tracker && base) this->tracker = new qs::window::WindowDamageTracker(base);
+
+	if (!this->presentation && qEnvironmentVariableIsSet("QS_FRAME_TRACE")) {
+		this->presentation = std::make_unique<PresentationTracker>();
 	}
 
-	this->rhi = sharedRhi(window->requestedFormat());
-	if (this->rhi) window->setGraphicsDevice(QQuickGraphicsDevice::fromRhi(this->rhi.get()));
+	auto* manager = buffer::WlBufferManager::instance();
+	this->renderThread = RenderThread::acquire(window->requestedFormat());
+	this->rhi = this->renderThread->rhi();
+	auto initialized = false;
+	if (this->rhi) {
+		window->setGraphicsDevice(QQuickGraphicsDevice::fromRhi(this->rhi));
+		this->prepareThread(this->renderThread->thread());
+		this->renderThread->invoke([this, window, manager, &initialized] {
+			initialized = this->initialize();
+			if (initialized) {
+				manager->initWindow(window);
+				return;
+			}
+			this->invalidate();
+			this->prepareThread(this->thread());
+		});
+	}
 
-	if (!this->rhi || !this->initialize()) {
-		this->rhi.reset();
+	if (!initialized) {
+		this->rhi = nullptr;
+		this->renderThread.reset();
 		emit window->sceneGraphError(
 		    QQuickWindow::ContextNotAvailable,
 		    QStringLiteral("Failed to initialize the render control.")
@@ -304,12 +352,10 @@ bool WaylandRenderControl::initializeScene() {
 		return false;
 	}
 
-	auto* manager = buffer::WlBufferManager::instance();
 	if (!manager->isReady()) {
 		// clang-format off
 		QObject::connect(manager, &buffer::WlBufferManager::ready, this, &WaylandRenderControl::scheduleFrame, Qt::SingleShotConnection);
 		// clang-format on
-		manager->initWindow(window);
 	}
 
 	return true;
@@ -318,9 +364,12 @@ bool WaylandRenderControl::initializeScene() {
 void WaylandRenderControl::renderFrame() {
 	auto* window = this->window();
 	if (!window->isExposed()) return;
+	if (this->frameInFlight) {
+		this->frameRequested = true;
+		return;
+	}
 	// Allow the first frame with updates disabled; see QSGThreadedRenderLoop::handleExposure().
 	if (this->presented && !QQuickWindowPrivate::get(window)->updatesEnabled) return;
-
 	auto* waylandWindow = dynamic_cast<QtWaylandClient::QWaylandWindow*>(window->handle());
 	if (!waylandWindow) return;
 
@@ -328,109 +377,181 @@ void WaylandRenderControl::renderFrame() {
 	const auto inputOnly = this->inputOnly(waylandWindow);
 	if (!inputOnly && !this->rhi && !this->initializeScene()) return;
 	if (!inputOnly && !buffer::WlBufferManager::instance()->isReady()) return;
-	// A window that showed the pixel renders its whole scene again.
-	if (!inputOnly && std::exchange(this->pixelAttached, false)) this->repaintRequested = true;
 
+	QElapsedTimer timer;
+	timer.start();
 	// Changes made here land in this frame; the next tick needs its own frame request below.
 	this->polishing = true;
-	const auto animating = qs::core::FrameAnimationDriver::advanceFrame();
+	const auto animating = qs::core::FrameAnimationDriver::advanceFrame(window);
 	this->polishItems();
 	this->polishing = false;
-
+	const auto polishNs = timer.nsecsElapsed();
 	if (!window->isExposed()) return;
-
-	if (inputOnly) {
+	if (this->inputOnly(waylandWindow)) {
 		this->commitPixel(waylandWindow);
 		return;
 	}
+	if (!this->rhi && !this->initializeScene()) return;
+	if (!buffer::WlBufferManager::instance()->isReady()) return;
+	// A window that showed the pixel renders its whole scene again.
+	if (std::exchange(this->pixelAttached, false)) this->repaintRequested = true;
 
+	auto frame = std::make_shared<Frame>();
+	frame->surfaceSize = waylandWindow->surfaceSize();
+	frame->scale = waylandWindow->scale();
+	frame->contentSize = window->size() * frame->scale;
+	frame->revision = this->commitRevision;
+	frame->serial = ++FRAME_SERIAL;
+	frame->requested = std::exchange(this->requestedAt, 0);
+	frame->input = std::exchange(this->inputAt, 0);
+	frame->animating = animating;
+	frame->polishNs = polishNs;
+	const auto pixelSize = frame->surfaceSize * frame->scale;
 	auto* decoration = waylandWindow->decoration();
-	auto scale = waylandWindow->scale();
-	auto surfaceSize = waylandWindow->surfaceSize();
-	auto pixelSize = surfaceSize * scale;
-	auto alpha = decoration || window->requestedFormat().hasAlpha();
-
+	const auto alpha = decoration || window->requestedFormat().hasAlpha();
 	if (pixelSize.isEmpty()) {
 		this->commitWithoutFrame();
 		return;
 	}
-
 	// onBufferReleased() schedules another frame.
 	if (!this->pool.available(pixelSize, alpha)) {
 		this->bufferAwaited = true;
 		return;
 	}
-
-	this->beginFrame();
-	if (!this->rhi->isRecordingFrame()) {
-		qCWarning(logRenderControl) << "Failed to begin a frame for" << window;
-		this->commitWithoutFrame();
-		return;
-	}
-
-	this->sync();
-
-	// Emit frameSwapped even when damage tracking skips the render.
-	auto* tracker = this->tracker;
-	auto repaint = std::exchange(this->repaintRequested, false);
-	if (tracker && !repaint && tracker->damage() == QRegion() && !tracker->pendingPreprocess()) {
-		this->endFrame();
-		this->commitWithoutFrame();
-		QQuickWindowPrivate::get(window)->fireFrameSwapped();
-		return;
-	}
-
-	if (!decoration) this->decoration.reset();
-
-	// Acquire a buffer only after the damage check.
-	QRhiRenderTarget* target = nullptr;
-	auto* buffer = this->pool.acquire(window, this->rhi.get(), pixelSize, alpha);
-	if (buffer) {
-		target =
-		    decoration ? this->decorationTarget(window->size() * scale) : buffer->renderTarget.get();
-	}
-
-	if (!target) {
+	frame->buffer = this->pool.acquire(pixelSize, alpha);
+	if (!frame->buffer) {
 		this->abortFrame();
 		return;
 	}
+	if (decoration) {
+		frame->decoration = decoration->contentImage();
+		const auto margins = waylandWindow->clientSideMargins();
+		frame->decorationOffset = (QPointF(margins.left(), margins.top()) * frame->scale).toPoint();
+	}
+	frame->repaint = std::exchange(this->repaintRequested, false);
+	this->frameInFlight = true;
+	this->frameRequested = false;
+	auto synchronized = std::make_shared<QSemaphore>();
+	this->renderThread->submit([this, frame, synchronized] {
+		QElapsedTimer timer;
+		timer.start();
+		this->beginFrame();
+		frame->failed = !this->rhi->isRecordingFrame();
+		if (!frame->failed) {
+			this->sync();
+			frame->damage = this->tracker ? this->tracker->damage() : std::nullopt;
+			frame->rendered = frame->repaint || !this->tracker || frame->damage != QRegion()
+			               || this->tracker->pendingPreprocess();
+		}
+		frame->syncNs = timer.nsecsElapsed();
+		synchronized->release();
+		if (!frame->failed) this->drawFrame(*frame);
+		QMetaObject::invokeMethod(
+		    this,
+		    [this, frame] { this->finishFrame(frame); },
+		    Qt::QueuedConnection
+		);
+	});
+	synchronized->acquire();
+}
 
+void WaylandRenderControl::drawFrame(Frame& frame) {
+	QElapsedTimer timer;
+	timer.start();
+	const auto finish = qScopeGuard([this, &frame, &timer] {
+		this->endFrame();
+		// Collect changes made during render; WindowDamageTracker::sync() forces full damage with margins.
+		frame.damage = this->tracker ? this->tracker->damage() : std::nullopt;
+		frame.renderNs = timer.nsecsElapsed();
+	});
+	if (!frame.rendered) return;
+	if (frame.decoration.isNull()) this->decoration.reset();
+	if (!this->pool.prepare(this->window(), this->rhi, frame.buffer)) {
+		frame.failed = true;
+		return;
+	}
+	auto* target = frame.decoration.isNull() ? frame.buffer->renderTarget.get()
+	                                         : this->decorationTarget(frame.contentSize);
+	if (!target) {
+		frame.failed = true;
+		return;
+	}
 	auto renderTarget = QQuickRenderTarget::fromRhiRenderTarget(target);
 	// Match the surface orientation when the framebuffer's Y axis points up.
 	renderTarget.setMirrorVertically(this->rhi->isYUpInFramebuffer());
-	window->setRenderTarget(renderTarget);
-
-	if (tracker) tracker->beginRender();
+	this->window()->setRenderTarget(renderTarget);
+	if (this->tracker) this->tracker->beginRender();
 	this->render();
+	if (!frame.decoration.isNull()) {
+		frame.failed = !this->drawDecoration(frame.decoration, frame.buffer, frame.decorationOffset);
+	}
+}
 
-	if (decoration) {
-		auto margins = waylandWindow->clientSideMargins();
-		auto offset = (QPointF(margins.left(), margins.top()) * scale).toPoint();
-		if (!this->drawDecoration(decoration->contentImage(), buffer, offset)) {
-			this->abortFrame();
-			return;
-		}
+void WaylandRenderControl::finishFrame(const std::shared_ptr<Frame>& frame) {
+	this->frameInFlight = false;
+	auto* window = this->window();
+	auto* waylandWindow = dynamic_cast<QtWaylandClient::QWaylandWindow*>(window->handle());
+	const auto valid = waylandWindow && window->isExposed() && !this->inputOnly(waylandWindow)
+	                && frame->surfaceSize == waylandWindow->surfaceSize()
+	                && frame->scale == waylandWindow->scale();
+
+	qCDebug(logFrame) << "frame" << frame->serial << window << "polish_us" << frame->polishNs / 1000
+	                  << "sync_us" << frame->syncNs / 1000 << "render_us" << frame->renderNs / 1000
+	                  << "rendered" << frame->rendered << "valid" << valid << "failed"
+	                  << frame->failed;
+
+	if (!valid) {
+		this->repaintRequested = true;
+		if (std::exchange(this->frameRequested, false) || window->isExposed()) this->scheduleFrame();
+		return;
 	}
 
-	this->endFrame();
+	if (frame->failed) {
+		this->repaintRequested = true;
+		this->abortFrame();
+	} else if (frame->rendered) {
+		this->commitFrame(*frame, waylandWindow);
+	} else {
+		this->commitWithoutFrame();
+	}
 
-	// Collect changes made during render; WindowDamageTracker::sync() forces full damage with margins.
-	auto damage = tracker ? tracker->damage() : std::nullopt;
-	auto ref = WlBufferRef(buffer->buffer->buffer(), surfaceSize);
-	waylandWindow->safeCommit(&ref, damage.value_or(QRect(QPoint(), surfaceSize)));
+	// Emit frameSwapped even when damage tracking skips the render.
 	QQuickWindowPrivate::get(window)->fireFrameSwapped();
 	// Only a committed buffer brings a frame callback; an unchanged window waits for the fallback instead of polling.
-	if (animating) this->scheduleFrame();
-	// Keep the damage until safeCommit() accepts a buffer.
-	if (!ref.busy()) return;
+	const auto animating = frame->animating && frame->rendered && !frame->failed;
+	if (std::exchange(this->frameRequested, false) || frame->pendingDamage || animating) {
+		this->scheduleFrame();
+	}
+}
 
-	buffer->busy = true;
-	this->commitRequested = false;
+void WaylandRenderControl::commitFrame(
+    Frame& frame,
+    QtWaylandClient::QWaylandWindow* waylandWindow
+) {
+	PresentationFeedback* feedback = nullptr;
+	if (this->presentation) {
+		feedback = this->presentation
+		               ->track(waylandWindow->surface(), frame.serial, frame.requested, frame.input);
+	}
+
+	auto ref = WlBufferRef(frame.buffer->buffer->buffer(), frame.surfaceSize);
+	waylandWindow->safeCommit(&ref, frame.damage.value_or(QRect(QPoint(), frame.surfaceSize)));
+	// Keep the damage until safeCommit() accepts a buffer.
+	if (!ref.busy()) {
+		PresentationTracker::cancel(feedback);
+		return;
+	}
+
+	frame.buffer->busy = true;
 	this->presented = true;
-	if (!tracker) return;
-	tracker->presented();
+	if (frame.revision == this->commitRevision) this->commitRequested = false;
+	if (!this->tracker) return;
+
 	// Redraw stale layer textures carried over by SceneDamageTracker::presented().
-	if (tracker->pendingDamage()) this->scheduleFrame();
+	this->renderThread->invoke([this, &frame] {
+		this->tracker->presented();
+		frame.pendingDamage = this->tracker->pendingDamage();
+	});
 }
 
 bool WaylandRenderControl::inputOnly(QtWaylandClient::QWaylandWindow* waylandWindow) const {
@@ -482,11 +603,10 @@ void WaylandRenderControl::commitPixel(QtWaylandClient::QWaylandWindow* waylandW
 }
 
 void WaylandRenderControl::abortFrame() {
-	this->endFrame();
 	this->commitWithoutFrame();
 	emit this->window()->sceneGraphError(
 	    QQuickWindow::ContextNotAvailable,
-	    QStringLiteral("Failed to create a buffer for the window.")
+	    QStringLiteral("Failed to render a frame for the window.")
 	);
 }
 

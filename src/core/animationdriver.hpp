@@ -2,10 +2,14 @@
 
 #include <qabstractanimation.h>
 #include <qchronotimer.h>
+#include <qelapsedtimer.h>
 #include <qobject.h>
-#include <qscreen.h>
+#include <qset.h>
 #include <qtclasshelpermacros.h>
 #include <qtmetamacros.h>
+#include <qwindow.h>
+
+#include "frameclock.hpp"
 
 namespace qs::core {
 
@@ -24,18 +28,20 @@ public:
 	static FrameAnimationDriver* instance();
 	// Called before a window polishes, so its frame samples animation time at its own vblank.
 	// Returns whether animations still run, so the window schedules the frame that samples the next tick.
-	static bool advanceFrame();
+	static bool advanceFrame(QWindow* window);
+	static void requestFrame(QWindow* window);
+	static void cancelFrame(QWindow* window);
 
 	void advance() override;
 
 private:
 	explicit FrameAnimationDriver();
+	void armFallback();
 
-	void onScreenAdded(QScreen* screen);
-	void updateInterval();
-
-	// Fires only when no frame advanced the clock in time, so animations nothing renders keep moving.
 	QChronoTimer fallback;
+	QElapsedTimer elapsed;
+	FrameClock clock;
+	QSet<QWindow*> trackedWindows;
 };
 
 } // namespace qs::core

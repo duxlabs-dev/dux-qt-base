@@ -33,6 +33,7 @@
 #include "qmlscreen.hpp"
 #include "rootwrapper.hpp"
 #include "scanenv.hpp"
+#include "spring.hpp"
 
 QuickshellSettings::QuickshellSettings() {
 	QObject::connect(
@@ -295,6 +296,16 @@ QVariant QuickshellGlobal::env(const QString& variable) { // NOLINT
 	if (!qEnvironmentVariableIsSet(vstr.data())) return QVariant::fromValue(nullptr);
 
 	return qEnvironmentVariable(vstr.data());
+}
+
+QVariantList QuickshellGlobal::springCoefficients(
+    double stiffness,
+    double damping,
+    double mass,
+    double seconds
+) {
+	const auto values = qs::core::springCoefficients(stiffness, damping, mass, seconds);
+	return QVariantList(values.begin(), values.end());
 }
 
 void QuickshellGlobal::execDetached(QList<QString> command) {

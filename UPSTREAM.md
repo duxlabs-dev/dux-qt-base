@@ -46,6 +46,15 @@ it when the fork diverges further.
 - `assets/`: removed.
 - `README.md`, `BUILD.md`, `Justfile`, `default.nix`, `.github/`: fork
   documentation, packaging, and CI.
+- `src/core/animationdriver.*`, `frameclock.hpp`: per-window animation
+  fallback deadlines and coalescing of samples within one millisecond.
+- `src/core/qmlglobal.*`, `spring.hpp`: analytical spring coefficients
+  exposed through `Quickshell.springCoefficients()`.
+- `src/wayland/rendercontrol.*`, `renderthread.*`, `presentation.*`,
+  `CMakeLists.txt`: shared render thread, bounded buffer allocation during
+  resize, and optional compositor presentation timing.
+- `src/window/damage.*`: scene graph callbacks run on the render thread;
+  GUI invalidation uses an atomic flag.
 
 ## syncing
 

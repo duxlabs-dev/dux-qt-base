@@ -1,14 +1,13 @@
 #include "animationdriver.hpp"
-#include <algorithm>
 #include <chrono>
 
 #include <private/qsgrenderloop_p.h>
 #include <qabstractanimation.h>
 #include <qchronotimer.h>
-#include <qguiapplication.h>
 #include <qnamespace.h>
 #include <qobject.h>
 #include <qscreen.h>
+#include <qwindow.h>
 
 namespace qs::core {
 
@@ -28,57 +27,57 @@ void FrameAnimationDriver::install() {
 
 FrameAnimationDriver* FrameAnimationDriver::instance() { return DRIVER; }
 
-bool FrameAnimationDriver::advanceFrame() {
-	if (!DRIVER || !DRIVER->isRunning()) return false;
+bool FrameAnimationDriver::advanceFrame(QWindow* window) {
+	if (!DRIVER) return false;
+	DRIVER->clock.forget(window);
+	if (!DRIVER->isRunning()) return false;
 	DRIVER->advance();
 	return DRIVER->isRunning();
 }
 
-FrameAnimationDriver::FrameAnimationDriver() {
-	this->fallback.setTimerType(Qt::PreciseTimer);
-
-	// clang-format off
-	QObject::connect(&this->fallback, &QChronoTimer::timeout, this, &FrameAnimationDriver::advance);
-	QObject::connect(this, &QAnimationDriver::started, this, [this] { this->fallback.start(); });
-	QObject::connect(this, &QAnimationDriver::stopped, &this->fallback, &QChronoTimer::stop);
-	// clang-format on
-
-	auto* app = static_cast<QGuiApplication*>(QGuiApplication::instance()); // NOLINT
-	QObject::connect(app, &QGuiApplication::screenAdded, this, &FrameAnimationDriver::onScreenAdded);
-	QObject::connect(
-	    app,
-	    &QGuiApplication::screenRemoved,
-	    this,
-	    &FrameAnimationDriver::updateInterval
-	);
-	for (auto* screen: QGuiApplication::screens()) this->onScreenAdded(screen);
-}
-
-// A rendering window restarts the fallback every frame, so it only fires when nothing visible moves.
-void FrameAnimationDriver::advance() {
-	this->fallback.start();
-	QAnimationDriver::advance();
-}
-
-void FrameAnimationDriver::onScreenAdded(QScreen* screen) {
-	QObject::connect(
-	    screen,
-	    &QScreen::refreshRateChanged,
-	    this,
-	    &FrameAnimationDriver::updateInterval
-	);
-	this->updateInterval();
-}
-
-// Two periods of the fastest screen: a window rendering at any refresh rate wins the race.
-void FrameAnimationDriver::updateInterval() {
-	auto refreshRate = 60.0;
-	for (auto* screen: QGuiApplication::screens()) {
-		refreshRate = std::max(refreshRate, screen->refreshRate());
+void FrameAnimationDriver::requestFrame(QWindow* window) {
+	if (!DRIVER || !DRIVER->isRunning()) return;
+	if (!DRIVER->trackedWindows.contains(window)) {
+		DRIVER->trackedWindows.insert(window);
+		QObject::connect(window, &QObject::destroyed, DRIVER, [window] {
+			DRIVER->trackedWindows.remove(window);
+			cancelFrame(window);
+		});
 	}
+	const auto rate = window->screen() ? window->screen()->refreshRate() : 60;
+	DRIVER->clock.request(window, DRIVER->elapsed.nsecsElapsed(), rate);
+	DRIVER->armFallback();
+}
 
-	const auto period = std::chrono::duration<double>(2 / refreshRate);
-	this->fallback.setInterval(std::chrono::round<std::chrono::nanoseconds>(period));
+void FrameAnimationDriver::cancelFrame(QWindow* window) {
+	if (!DRIVER) return;
+	DRIVER->clock.forget(window);
+	DRIVER->armFallback();
+}
+
+FrameAnimationDriver::FrameAnimationDriver() {
+	this->elapsed.start();
+	this->fallback.setTimerType(Qt::PreciseTimer);
+	this->fallback.setSingleShot(true);
+	QObject::connect(&this->fallback, &QChronoTimer::timeout, this, &FrameAnimationDriver::advance);
+	QObject::connect(this, &QAnimationDriver::started, this, [this] {
+		this->clock.reset();
+		this->armFallback();
+	});
+	QObject::connect(this, &QAnimationDriver::stopped, &this->fallback, &QChronoTimer::stop);
+}
+
+void FrameAnimationDriver::armFallback() {
+	if (!this->isRunning()) return;
+	this->fallback.setInterval(
+	    std::chrono::nanoseconds(this->clock.delay(this->elapsed.nsecsElapsed()))
+	);
+	this->fallback.start();
+}
+
+void FrameAnimationDriver::advance() {
+	if (this->clock.sample(this->elapsed.nsecsElapsed())) QAnimationDriver::advance();
+	this->armFallback();
 }
 
 } // namespace qs::core

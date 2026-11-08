@@ -1,6 +1,7 @@
 #pragma once
 
 #include <memory>
+#include <optional>
 #include <vector>
 
 #include <qcoreevent.h>
@@ -8,6 +9,7 @@
 #include <qobject.h>
 #include <qpoint.h>
 #include <qquickwindow.h>
+#include <qregion.h>
 #include <qsize.h>
 #include <qtclasshelpermacros.h>
 #include <qtimer.h>
@@ -31,6 +33,8 @@ class QWaylandWindow;
 namespace qs::wayland::render {
 
 class SurfaceBufferPool;
+class RenderThread;
+class PresentationTracker;
 class WaylandRenderControl;
 
 class SurfaceBuffer {
@@ -59,7 +63,8 @@ public:
 
 	[[nodiscard]] bool available(QSize size, bool alpha) const;
 	// Requires available(size, alpha).
-	SurfaceBuffer* acquire(QQuickWindow* window, QRhi* rhi, QSize size, bool alpha);
+	SurfaceBuffer* acquire(QSize size, bool alpha);
+	bool prepare(QQuickWindow* window, QRhi* rhi, SurfaceBuffer* buffer);
 	void clear();
 	// Drops idle buffers other than the last acquired one.
 	bool trim();
@@ -67,10 +72,11 @@ public:
 	void forget() { this->current = nullptr; }
 
 private:
+	friend class SurfaceBuffer;
 	static void onRelease(void* data, wl_buffer* buffer);
 	static const wl_buffer_listener LISTENER;
 
-	SurfaceBuffer* create(QQuickWindow* window, QRhi* rhi, QSize size, bool alpha);
+	SurfaceBuffer* create(QSize size, bool alpha);
 
 	std::vector<std::unique_ptr<SurfaceBuffer>> buffers;
 	std::shared_ptr<QRhiRenderBuffer> depthStencil;
@@ -100,6 +106,8 @@ public:
 	void requestCommit() override;
 	bool eventFilter(QObject* watched, QEvent* event) override;
 	void onBufferReleased();
+	void releaseBuffer(SurfaceBuffer* buffer);
+	void releaseDepthStencil(std::shared_ptr<QRhiRenderBuffer>& buffer);
 
 private slots:
 	void scheduleFrame();
@@ -107,16 +115,43 @@ private slots:
 	void trimBuffers();
 
 private:
+	struct Frame {
+		SurfaceBuffer* buffer = nullptr;
+		QSize surfaceSize;
+		QSize contentSize;
+		qreal scale = 1;
+		QImage decoration;
+		QPoint decorationOffset;
+		std::optional<QRegion> damage;
+		quint64 revision = 0;
+		quint64 serial = 0;
+		qint64 requested = 0;
+		qint64 input = 0;
+		bool repaint = false;
+		bool animating = false;
+		bool rendered = false;
+		bool failed = false;
+		bool pendingDamage = false;
+		qint64 polishNs = 0;
+		qint64 syncNs = 0;
+		qint64 renderNs = 0;
+	};
+
 	bool initializeScene();
 	[[nodiscard]] bool inputOnly(QtWaylandClient::QWaylandWindow* waylandWindow) const;
 	void commitPixel(QtWaylandClient::QWaylandWindow* waylandWindow);
 	void renderFrame();
+	void drawFrame(Frame& frame);
+	void finishFrame(const std::shared_ptr<Frame>& frame);
+	void commitFrame(Frame& frame, QtWaylandClient::QWaylandWindow* waylandWindow);
 	void abortFrame();
 	void commitWithoutFrame();
 	QRhiRenderTarget* decorationTarget(QSize size);
 	bool drawDecoration(const QImage& image, SurfaceBuffer* buffer, QPoint offset);
 
-	std::shared_ptr<QRhi> rhi;
+	std::unique_ptr<PresentationTracker> presentation;
+	std::shared_ptr<RenderThread> renderThread;
+	QRhi* rhi = nullptr;
 	SurfaceBufferPool pool;
 	std::unique_ptr<DecorationTarget> decoration;
 	qs::window::WindowDamageTracker* tracker = nullptr;
@@ -128,6 +163,11 @@ private:
 	bool presented = false;
 	bool repaintRequested = false;
 	bool polishing = false;
+	bool frameInFlight = false;
+	bool frameRequested = false;
+	quint64 commitRevision = 0;
+	qint64 requestedAt = 0;
+	qint64 inputAt = 0;
 };
 
 } // namespace qs::wayland::render
