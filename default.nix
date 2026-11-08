@@ -45,7 +45,7 @@
   withNetworkManager ? true,
 }: stdenv.mkDerivation {
   pname = "dux-qt-base${lib.optionalString debug "-debug"}";
-  version = "0.3.2";
+  version = builtins.head (builtins.match ".*project\\(dux-qt-base VERSION \"([^\"]+)\".*" (builtins.readFile ./CMakeLists.txt));
   src = nix-gitignore.gitignoreSource "/default.nix\n" ./.;
 
   outputs = [ "out" "dev" ];

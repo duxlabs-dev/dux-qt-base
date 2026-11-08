@@ -5,8 +5,10 @@ import hashlib, os, shlex, subprocess, sys
 
 build = os.path.abspath(sys.argv[1])
 out = sys.argv[2]
+version = open(os.path.join(build, "CMakeCache.txt")).read()
+version = [l.split("=")[1] for l in version.splitlines() if l.startswith("CMAKE_PROJECT_VERSION:")][0]
 cmd = subprocess.check_output(
-    ["ninja", "-C", build, "-t", "commands", "src/libdux-qt-base.so.0.3.2"], text=True
+    ["ninja", "-C", build, "-t", "commands", f"src/libdux-qt-base.so.{version}"], text=True
 ).strip().splitlines()[-1]
 if "&&" in cmd:
     cmd = [p for p in cmd.split("&&") if "-o " in p][0]
@@ -39,8 +41,6 @@ for t in toks:
     flags.append(t)
 flags = ["-L" + d for d in libdirs] + flags + ["-lstdc++", "-lm"]
 
-version = open(os.path.join(build, "CMakeCache.txt")).read()
-version = [l.split("=")[1] for l in version.splitlines() if l.startswith("CMAKE_PROJECT_VERSION:")][0]
 src = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 os.makedirs(os.path.dirname(out), exist_ok=True)
 libs = " ".join(shlex.quote(x) for x in flags)

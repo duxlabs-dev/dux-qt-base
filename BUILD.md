@@ -8,7 +8,7 @@ executable: consumers link `libdux-qt-base.so` and call `dqb_main()` from
 ## What gets installed
 `cmake --install` writes exactly these files, nothing else:
 
-- `<libdir>/libdux-qt-base.so.0.3.2`, plus the `.so.0` and `.so` symlinks
+- `<libdir>/libdux-qt-base.so.<version>`, plus the `.so.0` and `.so` symlinks
 - `<libdir>/pkgconfig/dux-qt-base.pc`
 - `<prefix>/include/dux-qt-base/dux_qt_base.h`
 
@@ -16,9 +16,10 @@ QML modules are compiled into the library. No QML, desktop, or icon files land
 on disk. Drop any `INSTALL_QML_PREFIX` or `INSTALL_QMLDIR` flags carried over
 from a quickshell recipe, they no longer do anything.
 
-Split packages as runtime (`.so.0`, `.so.0.3.2`) and dev (`.so` symlink, `.pc`,
-header). Ready-made recipes live in `distro/` (arch, fedora, opensuse, debian,
-void) and `default.nix`.
+Split packages as runtime (`.so.0`, `.so.<version>`) and dev (`.so` symlink,
+`.pc`, header). Maintained recipes for Arch, Fedora, openSUSE, Debian, Ubuntu
+and Void live in [dux-repo](https://github.com/duxlabs-dev/dux-repo), Nix uses
+`default.nix`.
 
 ## Packaging
 Set `-DDISTRIBUTOR="your distribution platform"` so bug reports identify the
@@ -31,6 +32,11 @@ triplet dir); the `.pc` file is generated from it.
 
 The upstream `USE_JEMALLOC` and `CRASH_HANDLER` options default to `OFF` and no
 packaging enables them. `BUILD_EXECUTABLE` is a dev-only option, keep it off.
+
+## Releasing
+The version lives only in `project(... VERSION ...)` in `CMakeLists.txt`. Bump
+it, commit, then push a matching `v<version>` tag. The release workflow refuses
+a tag that does not match, and dux-repo picks the release up from there.
 
 ## Dependencies
 Base dependencies, names vary by distro:

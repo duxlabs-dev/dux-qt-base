@@ -44,8 +44,8 @@ it when the fork diverges further.
 - `src/build/build.hpp.in`: version macros read `PROJECT_VERSION`.
 - `src/crash/interface.cpp`: crash window names dux-qt-base.
 - `assets/`: removed.
-- `README.md`, `BUILD.md`, `Justfile`, `default.nix`, `.github/`,
-  `distro/`: fork documentation, packaging, and CI.
+- `README.md`, `BUILD.md`, `Justfile`, `default.nix`, `.github/`: fork
+  documentation, packaging, and CI.
 
 ## syncing
 

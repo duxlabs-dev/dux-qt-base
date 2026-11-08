@@ -33,8 +33,16 @@ jobs:
       - name: Install dependencies (Fedora)
         if: matrix.image == 'fedora:latest'
         run: |
-          dnf install -y dnf5-plugins
-          dnf builddep -y distro/fedora/dux-qt-base.spec
+          dnf install -y \
+            cmake gcc-c++ ninja-build pkgconfig \
+            'cmake(Qt6Core)' 'cmake(Qt6DBus)' 'cmake(Qt6Network)' 'cmake(Qt6Qml)' \
+            'cmake(Qt6Quick)' 'cmake(Qt6QuickControls2)' 'cmake(Qt6ShaderTools)' \
+            'cmake(Qt6WaylandClient)' 'cmake(Qt6Widgets)' qt6-qtbase-private-devel \
+            'pkgconfig(CLI11)' 'pkgconfig(egl)' 'pkgconfig(gbm)' 'pkgconfig(glib-2.0)' \
+            'pkgconfig(gobject-2.0)' 'pkgconfig(libdrm)' 'pkgconfig(libpipewire-0.3)' \
+            'pkgconfig(pam)' 'pkgconfig(polkit-agent-1)' 'pkgconfig(polkit-gobject-1)' \
+            'pkgconfig(wayland-client)' 'pkgconfig(wayland-protocols)' 'pkgconfig(xcb)' \
+            'pkgconfig(xkbcommon)' spirv-tools vulkan-headers wayland-devel
 
       - name: Configure
         run: |
