@@ -187,6 +187,14 @@ public:
 	/// `displacement' = dd * displacement + dv * velocity`, `velocity' = vd * displacement + vv * velocity`.
 	Q_INVOKABLE static QVariantList
 	springCoefficients(double stiffness, double damping, double mass, double seconds);
+	/// Returns a FrameAnimation's `frameTime` moved onto the display cadence of the frame being
+	/// rendered, which removes the jitter in when frames start. Call it from `onTriggered`.
+	///
+	/// Returns `frameTime` unchanged without the `RenderControl` pragma.
+	Q_INVOKABLE static double frameDelta(double frameTime);
+	/// @@springCoefficients() for a FrameAnimation tick, with `frameTime` passed through @@frameDelta().
+	Q_INVOKABLE static QVariantList
+	springFrameCoefficients(double stiffness, double damping, double mass, double frameTime);
 
 	// MUST be before execDetached(ctx) or the other will be called with a default constructed obj.
 	QSDOC_HIDE Q_INVOKABLE static void execDetached(QList<QString> command);

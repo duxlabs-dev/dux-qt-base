@@ -1,16 +1,17 @@
 #include "rendercontrol.hpp"
-#include <algorithm>
 #include <chrono>
 #include <memory>
 #include <optional>
 #include <utility>
 
 #include <libdrm/drm_fourcc.h>
+#include <private/qquickanimatorcontroller_p.h>
 #include <private/qquickwindow_p.h>
 #include <private/qwaylandabstractdecoration_p.h>
 #include <private/qwaylandbuffer_p.h>
 #include <private/qwaylanddisplay_p.h>
 #include <private/qwaylandwindow_p.h>
+#include <qabstractanimation.h>
 #include <qcoreapplication.h>
 #include <qcoreevent.h>
 #include <qelapsedtimer.h>
@@ -40,7 +41,6 @@
 #include <qtmetamacros.h>
 #include <qtypes.h>
 #include <rhi/qrhi.h>
-#include <rhi/qrhi_platform.h>
 #include <wayland-client-protocol.h>
 
 #include "../core/animationdriver.hpp"
@@ -83,13 +83,15 @@ private:
 	QSize mSize;
 };
 
-qs::window::WindowRenderControl* createRenderControl() {
+qs::window::WindowRenderControl* createRenderControl() { return new WaylandRenderControl(); }
+
+void install() {
 	if (qEnvironmentVariableIsSet("QS_DISABLE_DMABUF")) {
 		qCInfo(logRenderControl) << "Render control is unavailable with QS_DISABLE_DMABUF.";
-		return nullptr;
+		return;
 	}
 
-	return new WaylandRenderControl();
+	qs::window::WindowRenderControl::setFactory(&createRenderControl);
 }
 
 } // namespace
@@ -208,7 +210,10 @@ WaylandRenderControl::WaylandRenderControl(): pool(this) {
 	// clang-format on
 }
 
-WaylandRenderControl::~WaylandRenderControl() {
+WaylandRenderControl::~WaylandRenderControl() { this->releaseScene(); }
+
+// initializeScene() builds the scene and its thread again.
+void WaylandRenderControl::releaseScene() {
 	if (!this->renderThread || !this->rhi) return;
 
 	this->renderThread->invoke([this] {
@@ -219,6 +224,8 @@ WaylandRenderControl::~WaylandRenderControl() {
 		this->prepareThread(this->thread());
 	});
 	this->pool.clear();
+	this->rhi = nullptr;
+	this->renderThread.reset();
 }
 
 void WaylandRenderControl::releaseBuffer(SurfaceBuffer* buffer) {
@@ -253,8 +260,10 @@ void WaylandRenderControl::scheduleFrame() {
 		this->frameRequested = true;
 		return;
 	}
-	qs::core::FrameAnimationDriver::requestFrame(this->window());
-	this->window()->requestUpdate();
+	auto* window = this->window();
+	// An unexposed window starts no frame, so its request would only speed up the fallback.
+	if (window->isExposed()) qs::core::FrameAnimationDriver::requestFrame(window);
+	window->requestUpdate();
 }
 
 // Explicit repaint requests bypass the damage check in renderFrame().
@@ -387,6 +396,9 @@ void WaylandRenderControl::queueFrame() {
 		    const auto frames = std::exchange(pending, {});
 		    QElapsedTimer timer;
 		    timer.start();
+		    for (const auto& control: frames) {
+			    if (control) qs::core::FrameAnimationDriver::batchFrame(control->window());
+		    }
 		    if (auto* driver = qs::core::FrameAnimationDriver::instance()) driver->advance();
 		    if (frameTracingEnabled()) {
 			    qCDebug(logFrame) << "batch" << frames.size() << "animation_us"
@@ -482,7 +494,10 @@ void WaylandRenderControl::renderFrame() {
 		if (!frame->failed) this->sync();
 		frame->syncNs = timer.nsecsElapsed();
 		this->synchronized.release();
-		if (!frame->failed) this->drawFrame(*frame);
+		if (!frame->failed) {
+			this->advanceAnimators();
+			this->drawFrame(*frame);
+		}
 		QMetaObject::invokeMethod(
 		    this,
 		    [this, frame, hold = qs::core::FrameAnimationDriver::holdIncubation()] {
@@ -492,6 +507,17 @@ void WaylandRenderControl::renderFrame() {
 		);
 	});
 	this->synchronized.acquire();
+}
+
+// Animator types run on the render thread; see QSGRenderThread::syncAndRender().
+void WaylandRenderControl::advanceAnimators() {
+	auto* driver = this->renderThread->animatorDriver();
+	if (!driver || !driver->isRunning()) return;
+
+	auto* controller = QQuickWindowPrivate::get(this->window())->animationController.get();
+	controller->lock();
+	driver->advance();
+	controller->unlock();
 }
 
 void WaylandRenderControl::drawFrame(Frame& frame) {
@@ -555,6 +581,8 @@ void WaylandRenderControl::finishFrame(const std::shared_ptr<Frame>& frame) {
 	if (frame->failed) {
 		this->repaintRequested = true;
 		this->abortFrame();
+		// abortFrame() hid the window. A lost device stays lost, so showing it again needs a new one.
+		if (this->rhi->isDeviceLost()) this->releaseScene();
 	} else if (frame->rendered) {
 		committed = this->commitFrame(*frame, waylandWindow);
 	} else {
@@ -731,6 +759,4 @@ bool WaylandRenderControl::drawDecoration(
 } // namespace qs::wayland::render
 
 // NOLINTNEXTLINE(misc-use-internal-linkage)
-void installRenderControl() {
-	qs::window::WindowRenderControl::setFactory(&qs::wayland::render::createRenderControl);
-}
+void installRenderControl() { qs::wayland::render::install(); }

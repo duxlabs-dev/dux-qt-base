@@ -16,27 +16,32 @@ namespace {
 QS_LOGGING_CATEGORY(logRenderControl, "quickshell.window.rendercontrol", QtWarningMsg);
 WindowRenderControl* (*FACTORY)() = nullptr; // NOLINT
 bool ENABLED = false;                        // NOLINT
-} // namespace
 
-void WindowRenderControl::setEnabled(bool enabled) {
-	ENABLED = enabled;
-	if (enabled) qs::core::FrameAnimationDriver::install();
-}
-void WindowRenderControl::setFactory(WindowRenderControl* (*factory)()) { FACTORY = factory; }
-
-WindowRenderControl* WindowRenderControl::create() {
-	if (!ENABLED) return nullptr;
-
+bool supported() {
 	if (!FACTORY) {
 		qCInfo(logRenderControl) << "Render control is unavailable on this platform.";
-		return nullptr;
+		return false;
 	}
 
 	if (QQuickWindow::graphicsApi() != QSGRendererInterface::OpenGL) {
 		qCInfo(logRenderControl) << "Render control requires OpenGL.";
-		return nullptr;
+		return false;
 	}
 
+	return true;
+}
+} // namespace
+
+// Windows without a render control stay on Qt's render loop, which needs its own animation driver.
+void WindowRenderControl::setEnabled(bool enabled) {
+	ENABLED = enabled && supported();
+	if (ENABLED) qs::core::FrameAnimationDriver::install();
+}
+
+void WindowRenderControl::setFactory(WindowRenderControl* (*factory)()) { FACTORY = factory; }
+
+WindowRenderControl* WindowRenderControl::create() {
+	if (!ENABLED) return nullptr;
 	return FACTORY();
 }
 

@@ -4,6 +4,7 @@
 #include <memory>
 #include <utility>
 
+#include <qabstractanimation.h>
 #include <qobject.h>
 #include <qoffscreensurface.h>
 #include <qsurfaceformat.h>
@@ -29,6 +30,8 @@ public:
 		QMetaObject::invokeMethod(&this->worker, std::forward<F>(work), Qt::QueuedConnection);
 	}
 	[[nodiscard]] QRhi* rhi() const { return this->device.get(); }
+	// Null when rendering on the GUI thread, whose animators follow its own driver.
+	[[nodiscard]] QAnimationDriver* animatorDriver() const { return this->animators.get(); }
 	QThread* thread() { return this->worker.thread(); }
 
 private:
@@ -36,6 +39,7 @@ private:
 	QObject worker;
 	std::unique_ptr<QOffscreenSurface> surface;
 	std::unique_ptr<QRhi> device;
+	std::unique_ptr<QAnimationDriver> animators;
 	bool threaded;
 };
 

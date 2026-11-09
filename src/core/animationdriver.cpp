@@ -4,7 +4,9 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <limits>
 #include <memory>
+#include <utility>
 
 #include <private/qsgrenderloop_p.h>
 #include <qabstractanimation.h>
@@ -23,6 +25,7 @@ namespace {
 FrameAnimationDriver* DRIVER = nullptr; // NOLINT
 std::atomic<bool> INCUBATING = false;   // NOLINT
 std::atomic<int> UNCOMMITTED = 0;       // NOLINT
+constexpr qint64 NS_PER_MS = 1000000;
 
 std::int64_t periodOf(double refreshRate) {
 	const auto rate = std::isfinite(refreshRate) && refreshRate > 0 ? refreshRate : 60;
@@ -57,7 +60,7 @@ FrameAnimationDriver* FrameAnimationDriver::instance() { return DRIVER; }
 bool FrameAnimationDriver::frameStarted(QWindow* window) {
 	if (!DRIVER) return false;
 	DRIVER->clock.forget(window);
-	DRIVER->schedule.started(window, DRIVER->elapsed.nsecsElapsed(), periodOf(window));
+	DRIVER->schedule.started(window, DRIVER->timer.nsecsElapsed(), periodOf(window));
 	DRIVER->armFallback();
 	return DRIVER->isRunning();
 }
@@ -72,7 +75,7 @@ void FrameAnimationDriver::requestFrame(QWindow* window) {
 		});
 	}
 	const auto rate = window->screen() ? window->screen()->refreshRate() : 60;
-	DRIVER->clock.request(window, DRIVER->elapsed.nsecsElapsed(), rate);
+	DRIVER->clock.request(window, DRIVER->timer.nsecsElapsed(), rate);
 	DRIVER->armFallback();
 }
 
@@ -80,7 +83,19 @@ void FrameAnimationDriver::cancelFrame(QWindow* window) {
 	if (!DRIVER) return;
 	DRIVER->clock.forget(window);
 	DRIVER->schedule.forget(window);
+	DRIVER->phase.forget(window);
+	DRIVER->batch.removeAll(window);
 	DRIVER->armFallback();
+}
+
+void FrameAnimationDriver::batchFrame(QWindow* window) {
+	if (DRIVER && DRIVER->isRunning()) DRIVER->batch.append(window);
+}
+
+double FrameAnimationDriver::frameDelta(double frameTime) {
+	if (!DRIVER || !DRIVER->isRunning()) return frameTime;
+	const auto correction = static_cast<double>(DRIVER->offset - DRIVER->previousOffset) / 1e9;
+	return std::max(0.0, frameTime + correction);
 }
 
 void FrameAnimationDriver::framesDispatched() {
@@ -104,7 +119,7 @@ std::atomic<bool>* FrameAnimationDriver::openIncubation() {
 
 std::chrono::nanoseconds FrameAnimationDriver::incubationBudget() {
 	if (!DRIVER) return {};
-	const auto now = DRIVER->elapsed.nsecsElapsed();
+	const auto now = DRIVER->timer.nsecsElapsed();
 	return std::chrono::nanoseconds(DRIVER->schedule.deadline(now, fastestPeriod()) - now);
 }
 
@@ -112,13 +127,11 @@ std::chrono::nanoseconds FrameAnimationDriver::incubationWake() {
 	if (!DRIVER) return {};
 	const auto expiry = DRIVER->schedule.expiry();
 	if (expiry == FrameSchedule::NONE) return {};
-	return std::chrono::nanoseconds(
-	    std::max<std::int64_t>(0, expiry - DRIVER->elapsed.nsecsElapsed())
-	);
+	return std::chrono::nanoseconds(std::max<std::int64_t>(0, expiry - DRIVER->timer.nsecsElapsed()));
 }
 
 FrameAnimationDriver::FrameAnimationDriver() {
-	this->elapsed.start();
+	this->timer.start();
 	this->fallback.setTimerType(Qt::PreciseTimer);
 	this->fallback.setSingleShot(true);
 	QObject::connect(
@@ -129,6 +142,10 @@ FrameAnimationDriver::FrameAnimationDriver() {
 	);
 	QObject::connect(this, &QAnimationDriver::started, this, [this] {
 		this->clock.reset();
+		this->startTime = this->timer.nsecsElapsed();
+		this->frameTime = this->startTime;
+		this->offset = 0;
+		this->previousOffset = 0;
 		this->armFallback();
 	});
 	QObject::connect(this, &QAnimationDriver::stopped, &this->fallback, &QChronoTimer::stop);
@@ -136,7 +153,7 @@ FrameAnimationDriver::FrameAnimationDriver() {
 
 void FrameAnimationDriver::armFallback() {
 	if (!this->isRunning()) return;
-	const auto now = this->elapsed.nsecsElapsed();
+	const auto now = this->timer.nsecsElapsed();
 	this->fallbackDeadline = now + this->clock.delay(now);
 	if (this->fallback.isActive() && this->armedDeadline <= this->fallbackDeadline) return;
 	this->startFallback(now);
@@ -153,7 +170,7 @@ void FrameAnimationDriver::startFallback(qint64 now) {
 
 void FrameAnimationDriver::dispatchFallback() {
 	if (!this->isRunning()) return;
-	const auto now = this->elapsed.nsecsElapsed();
+	const auto now = this->timer.nsecsElapsed();
 	if (now < this->fallbackDeadline) {
 		this->startFallback(now);
 		return;
@@ -162,9 +179,40 @@ void FrameAnimationDriver::dispatchFallback() {
 }
 
 void FrameAnimationDriver::advance() {
-	if (!this->isRunning()) return;
-	if (this->clock.sample(this->elapsed.nsecsElapsed())) QAnimationDriver::advance();
+	if (!this->isRunning()) {
+		this->batch.clear();
+		return;
+	}
+
+	const auto now = this->timer.nsecsElapsed();
+	auto locked = now;
+	auto fastest = std::numeric_limits<std::int64_t>::max();
+	for (auto* window: std::as_const(this->batch)) {
+		const auto period = periodOf(window);
+		const auto time = this->phase.lock(window, now, period);
+		if (period >= fastest) continue;
+		fastest = period;
+		locked = time;
+	}
+	this->batch.clear();
+
+	if (this->clock.sample(now)) {
+		// QUnifiedTimer skips a tick whose millisecond did not move, and a frame with nothing
+		// to draw commits no buffer, which ends the frame callback chain.
+		const auto next = this->startTime + (this->elapsed() + 1) * NS_PER_MS;
+		this->previousOffset = this->offset;
+		this->frameTime = std::max(locked, next);
+		this->offset = this->frameTime - now;
+		this->QAnimationDriver::advance();
+	}
+
 	this->armFallback();
+}
+
+// Constant between advances, like the vsync time of Qt's own driver.
+qint64 FrameAnimationDriver::elapsed() const {
+	if (!this->isRunning()) return 0;
+	return (this->frameTime - this->startTime) / NS_PER_MS;
 }
 
 } // namespace qs::core

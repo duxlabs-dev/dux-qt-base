@@ -9,7 +9,7 @@
 #include "../window/floatingwindow.hpp"
 #include "xdg_foreign.hpp"
 
-namespace QtWaylandClient {
+namespace QtWaylandClient { // NOLINT(readability-identifier-naming)
 class QWaylandWindow;
 }
 

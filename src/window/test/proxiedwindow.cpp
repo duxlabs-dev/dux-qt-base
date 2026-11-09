@@ -2,6 +2,7 @@
 
 #include <qcoreapplication.h>
 #include <qevent.h>
+#include <qnamespace.h>
 #include <qpoint.h>
 #include <qquickwindow.h>
 #include <qtest.h>

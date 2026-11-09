@@ -18,6 +18,7 @@ public:
 private slots:
 	void onWindowConnected();
 	void onWindowVisibleChanged();
+	void onForeignParentChanged();
 	void applyAppId();
 
 private:

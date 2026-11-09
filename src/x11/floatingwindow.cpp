@@ -36,6 +36,13 @@ XFloatingWindow::XFloatingWindow(ProxyFloatingWindow* window)
 
 	QObject::connect(window, &ProxyFloatingWindow::appIdChanged, this, &XFloatingWindow::applyAppId);
 
+	QObject::connect(
+	    window,
+	    &ProxyFloatingWindow::foreignParentChanged,
+	    this,
+	    &XFloatingWindow::onForeignParentChanged
+	);
+
 	if (window->backingWindow()) {
 		this->onWindowConnected();
 	}
@@ -61,6 +68,31 @@ void XFloatingWindow::onWindowVisibleChanged() {
 
 	this->applyAppId();
 	this->applyForeignParent();
+}
+
+// Qt writes WM_TRANSIENT_FOR only when it maps the window.
+void XFloatingWindow::onForeignParentChanged() {
+	if (!this->mWindow || !this->mWindow->isVisible() || !this->mWindow->handle()) return;
+	this->applyForeignParent();
+
+	auto window = static_cast<xcb_window_t>(this->mWindow->winId());
+	if (this->foreignParent) {
+		auto parent = static_cast<xcb_window_t>(this->foreignParent->winId());
+		xcb_change_property(
+		    x11Connection(),
+		    XCB_PROP_MODE_REPLACE,
+		    window,
+		    XCB_ATOM_WM_TRANSIENT_FOR,
+		    XCB_ATOM_WINDOW,
+		    32,
+		    1,
+		    &parent
+		);
+	} else {
+		xcb_delete_property(x11Connection(), window, XCB_ATOM_WM_TRANSIENT_FOR);
+	}
+
+	xcb_flush(x11Connection());
 }
 
 void XFloatingWindow::applyAppId() {

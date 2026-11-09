@@ -1,8 +1,8 @@
 #include "dbusmenu.hpp"
 #include <algorithm>
 
-#include <qbytearray.h>
 #include <qbuffer.h>
+#include <qbytearray.h>
 #include <qcontainerfwd.h>
 #include <qdatetime.h>
 #include <qdbusconnection.h>
@@ -23,6 +23,7 @@
 #include <qvariant.h>
 
 #include "../../core/iconimageprovider.hpp"
+#include "../../core/imageprovider.hpp"
 #include "../../core/logcat.hpp"
 #include "../../core/model.hpp"
 #include "../../core/qsmenu.hpp"

@@ -5,9 +5,12 @@
 #include <qimage.h>
 #include <qlogging.h>
 #include <qmap.h>
+#include <qminmax.h>
+#include <qnamespace.h>
 #include <qobject.h>
 #include <qpixmap.h>
 #include <qqmlengine.h>
+#include <qsize.h>
 #include <qtypes.h>
 
 namespace {

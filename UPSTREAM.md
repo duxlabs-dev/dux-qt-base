@@ -57,15 +57,23 @@ it when the fork diverges further.
 - `assets/`: removed.
 - `README.md`, `BUILD.md`, `Justfile`, `default.nix`, `.github/`: fork
   documentation, packaging, and CI.
-- `src/core/animationdriver.*`, `frameclock.hpp`, `frameschedule.hpp`: batched
-  animation sampling, per-window fallback deadlines and predicted frame starts.
+- `src/core/animationdriver.*`, `frameclock.hpp`, `frameschedule.hpp`,
+  `framephase.hpp`: batched animation sampling, per-window fallback deadlines,
+  predicted frame starts, and animation time locked to each window's frame
+  cadence.
 - `src/core/incubator.*`: with render control, incubation runs between
   predicted frames and yields while a rendered frame waits for its commit.
 - `src/core/qmlglobal.*`, `spring.hpp`: analytical spring coefficients
-  exposed through `Quickshell.springCoefficients()`.
+  exposed through `Quickshell.springCoefficients()`, plus
+  `Quickshell.frameDelta()` and `Quickshell.springFrameCoefficients()`.
 - `src/wayland/rendercontrol.*`, `renderthread.*`, `presentation.*`,
-  `CMakeLists.txt`: per-window render threads, bounded buffer allocation during
-  resize, and optional compositor presentation timing.
+  `CMakeLists.txt`: per-window render threads with a per-frame animator driver,
+  bounded buffer allocation during resize, a new scene after device loss, and
+  optional compositor presentation timing.
+- `src/window/rendercontrol.*`: the render control and its animation driver
+  are only enabled where the platform can create one.
+- `src/services/notifications/`: activation tokens for actions, sent even if
+  the requesting window is destroyed first; image rows padded to the rowstride.
 - `src/window/damage.*`: scene graph callbacks run on the render thread;
   GUI invalidation uses an atomic flag.
 

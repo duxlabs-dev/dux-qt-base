@@ -26,6 +26,7 @@
 #include <unistd.h>
 
 #include "../io/processcore.hpp"
+#include "animationdriver.hpp"
 #include "generation.hpp"
 #include "iconimageprovider.hpp"
 #include "instanceinfo.hpp"
@@ -307,6 +308,24 @@ QVariantList QuickshellGlobal::springCoefficients(
 ) {
 	const auto values = qs::core::springCoefficients(stiffness, damping, mass, seconds);
 	return QVariantList(values.begin(), values.end());
+}
+
+double QuickshellGlobal::frameDelta(double frameTime) {
+	return qs::core::FrameAnimationDriver::frameDelta(frameTime);
+}
+
+QVariantList QuickshellGlobal::springFrameCoefficients(
+    double stiffness,
+    double damping,
+    double mass,
+    double frameTime
+) {
+	return QuickshellGlobal::springCoefficients(
+	    stiffness,
+	    damping,
+	    mass,
+	    QuickshellGlobal::frameDelta(frameTime)
+	);
 }
 
 void QuickshellGlobal::execDetached(QList<QString> command) {

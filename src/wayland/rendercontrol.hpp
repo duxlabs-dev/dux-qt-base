@@ -27,7 +27,7 @@ namespace qs::window {
 class WindowDamageTracker;
 }
 
-namespace QtWaylandClient {
+namespace QtWaylandClient { // NOLINT(readability-identifier-naming)
 class QWaylandWindow;
 }
 
@@ -139,10 +139,12 @@ private:
 	};
 
 	bool initializeScene();
+	void releaseScene();
 	[[nodiscard]] bool inputOnly(QtWaylandClient::QWaylandWindow* waylandWindow) const;
 	void commitPixel(QtWaylandClient::QWaylandWindow* waylandWindow);
 	void queueFrame();
 	void renderFrame();
+	void advanceAnimators();
 	void drawFrame(Frame& frame);
 	void finishFrame(const std::shared_ptr<Frame>& frame);
 	bool commitFrame(const Frame& frame, QtWaylandClient::QWaylandWindow* waylandWindow);

@@ -53,7 +53,7 @@ protected:
 	) override {
 		const auto seconds = (static_cast<quint64>(secondsHi) << 32U) | secondsLo;
 		const auto presented = static_cast<qint64>(seconds * 1000000000 + nanoseconds);
-		const auto elapsedUs = [&](qint64 since) {
+		const auto elapsedUs = [this, presented](qint64 since) {
 			return this->owner->monotonic && since ? (presented - since) / 1000 : -1;
 		};
 

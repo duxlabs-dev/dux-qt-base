@@ -1,13 +1,20 @@
 #include "notification.hpp"
+#include <functional>
+#include <memory>
+#include <utility>
 
 #include <qcontainerfwd.h>
 #include <qdbusargument.h>
 #include <qlist.h>
 #include <qlogging.h>
 #include <qloggingcategory.h>
+#include <qnamespace.h>
 #include <qobject.h>
+#include <qobjectdefs.h>
 #include <qpointer.h>
 #include <qproperty.h>
+#include <qstring.h>
+#include <qtclasshelpermacros.h>
 #include <qtmetamacros.h>
 #include <qtypes.h>
 
@@ -47,6 +54,37 @@ QString NotificationCloseReason::toString(NotificationCloseReason::Enum value) {
 QString NotificationAction::identifier() const { return this->mIdentifier; }
 QString NotificationAction::text() const { return this->mText; }
 
+namespace {
+
+// Token requests die with their window; a dropped one still sends, or close() stays deferred.
+class PendingAction {
+public:
+	explicit PendingAction(std::function<void(const QString&)> send): send(std::move(send)) {}
+	Q_DISABLE_COPY_MOVE(PendingAction);
+
+	~PendingAction() {
+		if (this->sent) return;
+
+		// Queued: this runs inside the window's destructor.
+		QMetaObject::invokeMethod(
+		    NotificationServer::instance(),
+		    [send = std::move(this->send)] { send({}); },
+		    Qt::QueuedConnection
+		);
+	}
+
+	void complete(const QString& token) {
+		if (std::exchange(this->sent, true)) return;
+		this->send(token);
+	}
+
+private:
+	std::function<void(const QString&)> send;
+	bool sent = false;
+};
+
+} // namespace
+
 void NotificationAction::invoke() {
 	if (this->notification->isRetained()) {
 		qCritical() << "Cannot invoke destroyed notification" << this;
@@ -63,10 +101,12 @@ void NotificationAction::invoke() {
 	};
 
 	this->notification->beginActivation();
+	auto pending = std::make_shared<PendingAction>(std::move(send));
 #ifdef QS_WAYLAND
-	if (qs::wayland::activation::requestActivationToken(send)) return;
+	auto complete = [pending](const QString& token) { pending->complete(token); };
+	if (qs::wayland::activation::requestActivationToken(complete)) return;
 #endif
-	send({});
+	pending->complete({});
 }
 
 void Notification::beginActivation() { ++this->pendingActivations; }
