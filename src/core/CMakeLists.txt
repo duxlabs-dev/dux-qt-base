@@ -39,6 +39,7 @@ qt_add_library(quickshell-core STATIC
 	instanceinfo.cpp
 	common.cpp
 	iconprovider.cpp
+	stringmap.hpp
 	scriptmodel.cpp
 	colorquantizer.cpp
 	toolsupport.cpp

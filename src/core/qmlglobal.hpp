@@ -229,6 +229,9 @@ public:
 	Q_INVOKABLE static QString iconPath(const QString& icon, const QString& fallback);
 	/// Check if specified icon has an available icon in your icon theme
 	Q_INVOKABLE static bool hasThemeIcon(const QString& icon);
+	/// Returns a map from strings to plain values, kept outside the JavaScript heap so garbage
+	/// collection skips its entries. Values are stored as variants, so objects are copied.
+	Q_INVOKABLE static QObject* createStringMap();
 	/// Equivalent to `${Quickshell.configDir}/${path}`
 	Q_INVOKABLE [[nodiscard]] QString shellPath(const QString& path) const;
 	/// > [!WARNING] Deprecated: Renamed to @@shellPath() for clarity.

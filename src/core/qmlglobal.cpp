@@ -34,6 +34,7 @@
 #include "rootwrapper.hpp"
 #include "scanenv.hpp"
 #include "spring.hpp"
+#include "stringmap.hpp"
 
 QuickshellSettings::QuickshellSettings() {
 	QObject::connect(
@@ -379,4 +380,10 @@ QuickshellGlobal* QuickshellGlobal::create(QQmlEngine* engine, QJSEngine* /*unus
 	}
 
 	return qsg;
+}
+
+QObject* QuickshellGlobal::createStringMap() {
+	auto* map = new StringMap();
+	QJSEngine::setObjectOwnership(map, QJSEngine::JavaScriptOwnership);
+	return map;
 }
