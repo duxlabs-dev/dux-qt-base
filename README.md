@@ -56,7 +56,7 @@ null-proxy guard needs, so set `CGO_LDFLAGS_ALLOW='-Wl,--export-dynamic-symbol=.
 
 ## Rendering
 
-With render control enabled, windows share one render thread and graphics
+With render control enabled, each window renders on its own thread and graphics
 device. `QS_RENDER_THREAD=0` runs that work on the GUI thread instead.
 
 Set `QS_FRAME_TRACE=1` and

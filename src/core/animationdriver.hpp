@@ -1,5 +1,9 @@
 #pragma once
 
+#include <atomic>
+#include <chrono>
+#include <memory>
+
 #include <qabstractanimation.h>
 #include <qchronotimer.h>
 #include <qelapsedtimer.h>
@@ -10,13 +14,10 @@
 #include <qwindow.h>
 
 #include "frameclock.hpp"
+#include "frameschedule.hpp"
 
 namespace qs::core {
 
-///! Animation clock sampled when a window renders
-/// Qt's render loop drives no render control window, so it falls back to a system timer that steps
-/// animations by a fixed vsync off the vblank. This driver advances by wall time from each window's
-/// frame instead, so every display gets exact per frame motion.
 class FrameAnimationDriver: public QAnimationDriver {
 	Q_OBJECT;
 
@@ -26,13 +27,22 @@ public:
 
 	static void install();
 	static FrameAnimationDriver* instance();
-	// Called before a window polishes, so its frame samples animation time at its own vblank.
-	// Returns whether animations still run, so the window schedules the frame that samples the next tick.
-	static bool advanceFrame(QWindow* window);
+	static bool frameStarted(QWindow* window);
 	static void requestFrame(QWindow* window);
 	static void cancelFrame(QWindow* window);
+	static void framesDispatched();
+
+	// Taken by the render thread before handing a frame back; incubation yields until it is released.
+	static std::shared_ptr<void> holdIncubation();
+	// Null while a rendered frame waits for its commit.
+	static std::atomic<bool>* openIncubation();
+	static std::chrono::nanoseconds incubationBudget();
+	static std::chrono::nanoseconds incubationWake();
 
 	void advance() override;
+
+signals:
+	void betweenFrames();
 
 private:
 	explicit FrameAnimationDriver();
@@ -41,6 +51,7 @@ private:
 	QChronoTimer fallback;
 	QElapsedTimer elapsed;
 	FrameClock clock;
+	FrameSchedule schedule;
 	QSet<QWindow*> trackedWindows;
 };
 

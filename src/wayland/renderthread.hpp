@@ -14,11 +14,7 @@ namespace qs::wayland::render {
 
 class RenderThread {
 public:
-	static std::shared_ptr<RenderThread> acquire(const QSurfaceFormat& format);
-	explicit RenderThread(
-	    const QSurfaceFormat& format,
-	    QRhi::Implementation backend = QRhi::OpenGLES2
-	);
+	explicit RenderThread(const QSurfaceFormat& format);
 	~RenderThread();
 	Q_DISABLE_COPY_MOVE(RenderThread);
 

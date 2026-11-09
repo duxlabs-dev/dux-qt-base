@@ -14,33 +14,15 @@
 
 namespace qs::wayland::render {
 
-std::shared_ptr<RenderThread> RenderThread::acquire(const QSurfaceFormat& format) {
-	static std::weak_ptr<RenderThread> shared;
-	if (auto thread = shared.lock()) return thread;
-	auto thread = std::make_shared<RenderThread>(format);
-	shared = thread;
-	return thread;
-}
-
-// QOffscreenSurface must be created on the GUI thread.
-RenderThread::RenderThread(const QSurfaceFormat& format, QRhi::Implementation backend)
-    : surface(
-          backend == QRhi::OpenGLES2 ? QRhiGles2InitParams::newFallbackSurface(format) : nullptr
-      )
+RenderThread::RenderThread(const QSurfaceFormat& format)
+    : surface(QRhiGles2InitParams::newFallbackSurface(format))
     , threaded(qEnvironmentVariable("QS_RENDER_THREAD") != "0") {
 	if (this->threaded) {
 		this->renderThread.setObjectName(QStringLiteral("qs-render"));
 		this->worker.moveToThread(&this->renderThread);
 		this->renderThread.start();
 	}
-	this->invoke([this, format, backend] {
-		if (backend == QRhi::Null) {
-			QRhiNullInitParams params;
-			this->device.reset(QRhi::create(QRhi::Null, &params));
-			return;
-		}
-
-		// Keep the context offscreen; leave the window out of the init params.
+	this->invoke([this, format] {
 		QRhiGles2InitParams params;
 		params.format = format;
 		params.fallbackSurface = this->surface.get();

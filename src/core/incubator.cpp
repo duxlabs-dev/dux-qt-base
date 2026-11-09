@@ -1,7 +1,12 @@
 #include "incubator.hpp"
+#include <chrono>
 
+#include <private/qqmlengine_p.h>
+#include <private/qqmlincubator_p.h>
+#include <private/qqmlvme_p.h>
 #include <private/qsgrenderloop_p.h>
 #include <qabstractanimation.h>
+#include <qdeadlinetimer.h>
 #include <qguiapplication.h>
 #include <qlogging.h>
 #include <qloggingcategory.h>
@@ -17,6 +22,11 @@
 #include "logcat.hpp"
 
 QS_LOGGING_CATEGORY(logIncubator, "quickshell.incubator", QtWarningMsg);
+
+namespace {
+constexpr auto MIN_SLICE = std::chrono::microseconds(100);
+constexpr int MAX_DEFERRED_SLICES = 4;
+} // namespace
 
 void QsQmlIncubator::statusChanged(QQmlIncubator::Status status) {
 	switch (status) {
@@ -53,8 +63,17 @@ void QsIncubationController::initLoop() {
 	    &QsIncubationController::incubate
 	);
 
-	QAnimationDriver* animationDriver = qs::core::FrameAnimationDriver::instance();
-	if (!animationDriver) animationDriver = this->renderLoop->animationDriver();
+	if (auto* frameDriver = qs::core::FrameAnimationDriver::instance()) {
+		this->wake.setTimerType(Qt::PreciseTimer);
+		this->wake.setSingleShot(true);
+		// clang-format off
+		QObject::connect(&this->wake, &QChronoTimer::timeout, this, &QsIncubationController::incubate);
+		QObject::connect(frameDriver, &qs::core::FrameAnimationDriver::betweenFrames, this, &QsIncubationController::incubate, Qt::QueuedConnection);
+		// clang-format on
+		return;
+	}
+
+	auto* animationDriver = this->renderLoop->animationDriver();
 	if (animationDriver) {
 		QObject::connect(
 		    animationDriver,
@@ -104,6 +123,11 @@ void QsIncubationController::incubateLater() {
 }
 
 void QsIncubationController::incubate() {
+	if (qs::core::FrameAnimationDriver::instance()) {
+		this->incubateBetweenFrames();
+		return;
+	}
+
 	if ((!this->followRenderloop || this->renderLoop) && this->incubatingObjectCount()) {
 		if (!this->followRenderloop) {
 			this->incubateFor(10);
@@ -119,7 +143,46 @@ void QsIncubationController::incubate() {
 
 void QsIncubationController::animationStopped() { this->incubate(); }
 
+void QsIncubationController::incubateBetweenFrames() {
+	if (!this->incubatingObjectCount()) {
+		this->deferredSlices = 0;
+		return;
+	}
+
+	std::chrono::nanoseconds budget = qs::core::FrameAnimationDriver::incubationBudget();
+	if (budget < MIN_SLICE) {
+		// A window rendering every refresh can leave no gap; slice anyway so loaders still finish.
+		if (++this->deferredSlices < MAX_DEFERRED_SLICES) {
+			this->wake.setInterval(qs::core::FrameAnimationDriver::incubationWake());
+			this->wake.start();
+			return;
+		}
+		budget = std::chrono::milliseconds(this->incubationTime);
+	}
+
+	// The released hold dispatches the next slice.
+	auto* run = qs::core::FrameAnimationDriver::openIncubation();
+	if (!run) return;
+	this->deferredSlices = 0;
+
+	QQmlInstantiationInterrupt interrupt(run, QDeadlineTimer(budget, Qt::PreciseTimer));
+	do {
+		auto* engine = QQmlEnginePrivate::get(this->engine());
+		// NOLINTNEXTLINE(cppcoreguidelines-pro-type-static-cast-downcast)
+		static_cast<QQmlIncubatorPrivate*>(engine->incubatorList.first())->incubate(interrupt);
+	} while (this->incubatingObjectCount() && !interrupt.shouldInterrupt());
+
+	if (this->incubatingObjectCount()) {
+		QMetaObject::invokeMethod(this, &QsIncubationController::incubate, Qt::QueuedConnection);
+	}
+}
+
 void QsIncubationController::incubatingObjectCountChanged(int count) {
+	if (count && qs::core::FrameAnimationDriver::instance()) {
+		QMetaObject::invokeMethod(this, &QsIncubationController::incubate, Qt::QueuedConnection);
+		return;
+	}
+
 	if (count
 	    && (!this->followRenderloop
 	        || (this->renderLoop && !this->renderLoop->interleaveIncubation())))

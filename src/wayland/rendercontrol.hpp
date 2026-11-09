@@ -140,6 +140,7 @@ private:
 	bool initializeScene();
 	[[nodiscard]] bool inputOnly(QtWaylandClient::QWaylandWindow* waylandWindow) const;
 	void commitPixel(QtWaylandClient::QWaylandWindow* waylandWindow);
+	void queueFrame();
 	void renderFrame();
 	void drawFrame(Frame& frame);
 	void finishFrame(const std::shared_ptr<Frame>& frame);
@@ -150,7 +151,7 @@ private:
 	bool drawDecoration(const QImage& image, SurfaceBuffer* buffer, QPoint offset);
 
 	std::unique_ptr<PresentationTracker> presentation;
-	std::shared_ptr<RenderThread> renderThread;
+	std::unique_ptr<RenderThread> renderThread;
 	QRhi* rhi = nullptr;
 	SurfaceBufferPool pool;
 	std::unique_ptr<DecorationTarget> decoration;
@@ -163,6 +164,7 @@ private:
 	bool presented = false;
 	bool repaintRequested = false;
 	bool polishing = false;
+	bool frameQueued = false;
 	bool frameInFlight = false;
 	bool frameRequested = false;
 	quint64 commitRevision = 0;

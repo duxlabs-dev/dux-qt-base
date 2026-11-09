@@ -11,9 +11,11 @@
 #include <private/qwaylandbuffer_p.h>
 #include <private/qwaylanddisplay_p.h>
 #include <private/qwaylandwindow_p.h>
+#include <qcoreapplication.h>
 #include <qcoreevent.h>
 #include <qelapsedtimer.h>
 #include <qimage.h>
+#include <qlist.h>
 #include <qlogging.h>
 #include <qloggingcategory.h>
 #include <qmargins.h>
@@ -22,6 +24,7 @@
 #include <qoffscreensurface.h> // NOLINT(misc-include-cleaner)
 #include <qpa/qplatformwindow.h>
 #include <qpoint.h>
+#include <qpointer.h>
 #include <qquickgraphicsdevice.h>
 #include <qquickrendertarget.h>
 #include <qquickwindow.h>
@@ -239,7 +242,7 @@ void WaylandRenderControl::requestCommit() {
 // renderFrame() syncs animation and polish changes in the current frame.
 void WaylandRenderControl::scheduleFrame() {
 	if (this->presentation && !this->requestedAt) this->requestedAt = PresentationTracker::now();
-	if (this->polishing) return;
+	if (this->polishing || this->frameQueued) return;
 	if (this->frameInFlight) {
 		this->frameRequested = true;
 		return;
@@ -287,7 +290,7 @@ bool WaylandRenderControl::eventFilter(QObject* watched, QEvent* event) {
 	case QEvent::TouchBegin:
 		if (this->presentation) this->inputAt = PresentationTracker::now();
 		break;
-	case QEvent::UpdateRequest: this->renderFrame(); break;
+	case QEvent::UpdateRequest: this->queueFrame(); break;
 	case QEvent::Expose:
 		if (!this->window()->isExposed()) {
 			this->presented = false;
@@ -305,7 +308,7 @@ bool WaylandRenderControl::eventFilter(QObject* watched, QEvent* event) {
 			this->window()->handle()->deliverUpdateRequest();
 			break;
 		}
-		this->renderFrame();
+		this->queueFrame();
 		break;
 	default: break;
 	}
@@ -325,7 +328,7 @@ bool WaylandRenderControl::initializeScene() {
 	}
 
 	auto* manager = buffer::WlBufferManager::instance();
-	this->renderThread = RenderThread::acquire(window->requestedFormat());
+	this->renderThread = std::make_unique<RenderThread>(window->requestedFormat());
 	this->rhi = this->renderThread->rhi();
 	auto initialized = false;
 	if (this->rhi) {
@@ -361,6 +364,37 @@ bool WaylandRenderControl::initializeScene() {
 	return true;
 }
 
+void WaylandRenderControl::queueFrame() {
+	if (!this->window()->isExposed() || this->frameQueued) return;
+	if (this->frameInFlight) {
+		this->frameRequested = true;
+		return;
+	}
+	this->frameQueued = true;
+	static QList<QPointer<WaylandRenderControl>> pending;
+	pending.append(this);
+	if (pending.size() != 1) return;
+
+	QMetaObject::invokeMethod(
+	    QCoreApplication::instance(),
+	    [] {
+		    const auto frames = std::exchange(pending, {});
+		    QElapsedTimer timer;
+		    timer.start();
+		    if (auto* driver = qs::core::FrameAnimationDriver::instance()) driver->advance();
+		    qCDebug(logFrame) << "batch" << frames.size() << "animation_us"
+		                      << timer.nsecsElapsed() / 1000;
+		    for (const auto& control: frames) {
+			    if (!control) continue;
+			    control->frameQueued = false;
+			    control->renderFrame();
+		    }
+		    qs::core::FrameAnimationDriver::framesDispatched();
+	    },
+	    Qt::QueuedConnection
+	);
+}
+
 void WaylandRenderControl::renderFrame() {
 	auto* window = this->window();
 	if (!window->isExposed()) return;
@@ -380,9 +414,8 @@ void WaylandRenderControl::renderFrame() {
 
 	QElapsedTimer timer;
 	timer.start();
-	// Changes made here land in this frame; the next tick needs its own frame request below.
 	this->polishing = true;
-	const auto animating = qs::core::FrameAnimationDriver::advanceFrame(window);
+	const auto animating = qs::core::FrameAnimationDriver::frameStarted(window);
 	this->polishItems();
 	this->polishing = false;
 	const auto polishNs = timer.nsecsElapsed();
@@ -396,7 +429,7 @@ void WaylandRenderControl::renderFrame() {
 	// A window that showed the pixel renders its whole scene again.
 	if (std::exchange(this->pixelAttached, false)) this->repaintRequested = true;
 
-	auto frame = std::make_shared<Frame>();
+	const auto frame = std::make_shared<Frame>();
 	frame->surfaceSize = waylandWindow->surfaceSize();
 	frame->scale = waylandWindow->scale();
 	frame->contentSize = window->size() * frame->scale;
@@ -431,24 +464,21 @@ void WaylandRenderControl::renderFrame() {
 	frame->repaint = std::exchange(this->repaintRequested, false);
 	this->frameInFlight = true;
 	this->frameRequested = false;
-	auto synchronized = std::make_shared<QSemaphore>();
+	const auto synchronized = std::make_shared<QSemaphore>();
 	this->renderThread->submit([this, frame, synchronized] {
 		QElapsedTimer timer;
 		timer.start();
 		this->beginFrame();
 		frame->failed = !this->rhi->isRecordingFrame();
-		if (!frame->failed) {
-			this->sync();
-			frame->damage = this->tracker ? this->tracker->damage() : std::nullopt;
-			frame->rendered = frame->repaint || !this->tracker || frame->damage != QRegion()
-			               || this->tracker->pendingPreprocess();
-		}
+		if (!frame->failed) this->sync();
 		frame->syncNs = timer.nsecsElapsed();
 		synchronized->release();
 		if (!frame->failed) this->drawFrame(*frame);
 		QMetaObject::invokeMethod(
 		    this,
-		    [this, frame] { this->finishFrame(frame); },
+		    [this, frame, hold = qs::core::FrameAnimationDriver::holdIncubation()] {
+			    this->finishFrame(frame);
+		    },
 		    Qt::QueuedConnection
 		);
 	});
@@ -464,6 +494,9 @@ void WaylandRenderControl::drawFrame(Frame& frame) {
 		frame.damage = this->tracker ? this->tracker->damage() : std::nullopt;
 		frame.renderNs = timer.nsecsElapsed();
 	});
+	frame.damage = this->tracker ? this->tracker->damage() : std::nullopt;
+	frame.rendered = frame.repaint || !this->tracker || frame.damage != QRegion()
+	              || this->tracker->pendingPreprocess();
 	if (!frame.rendered) return;
 	if (frame.decoration.isNull()) this->decoration.reset();
 	if (!this->pool.prepare(this->window(), this->rhi, frame.buffer)) {
