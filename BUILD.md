@@ -100,6 +100,8 @@ Per-protocol switches: `-DSCREENCOPY_ICC=OFF` ([ext-image-copy-capture-v1]),
 Use quickshell's render control for Wayland windows and report changed frame regions
 to the compositor. Enable it in a shell with `//@ pragma RenderControl`.
 
+Set `QS_FRAME_TRACE=1` to collect per-frame timings and presentation diagnostics.
+
 To disable: `-DWAYLAND_RENDER_CONTROL=OFF`
 
 Dependencies:

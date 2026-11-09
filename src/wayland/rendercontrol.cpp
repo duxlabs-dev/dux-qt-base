@@ -64,6 +64,12 @@ quint64 FRAME_SERIAL = 0; // NOLINT
 
 QS_LOGGING_CATEGORY(logFrame, "quickshell.wayland.rendercontrol.frame", QtWarningMsg);
 
+// Detailed logs format every quickshell debug message regardless of its category level.
+bool frameTracingEnabled() {
+	static const bool enabled = qEnvironmentVariableIsSet("QS_FRAME_TRACE");
+	return enabled;
+}
+
 // Borrow the wl_buffer for one commit; SurfaceBufferPool owns it and handles releases.
 class WlBufferRef: public QtWaylandClient::QWaylandBuffer {
 public:
@@ -157,7 +163,7 @@ SurfaceBuffer* SurfaceBufferPool::create(QSize size, bool alpha) {
 	if (!result->buffer) return nullptr;
 	wl_buffer_add_listener(result->buffer->buffer(), &LISTENER, result.get());
 
-	qCDebug(logFrame) << "allocate" << size;
+	if (frameTracingEnabled()) qCDebug(logFrame) << "allocate" << size;
 	return this->buffers.emplace_back(std::move(result)).get();
 }
 
@@ -323,7 +329,7 @@ bool WaylandRenderControl::initializeScene() {
 	auto* base = qobject_cast<QsQuickWindowBase*>(window);
 	if (!this->tracker && base) this->tracker = new qs::window::WindowDamageTracker(base);
 
-	if (!this->presentation && qEnvironmentVariableIsSet("QS_FRAME_TRACE")) {
+	if (!this->presentation && frameTracingEnabled()) {
 		this->presentation = std::make_unique<PresentationTracker>();
 	}
 
@@ -382,8 +388,10 @@ void WaylandRenderControl::queueFrame() {
 		    QElapsedTimer timer;
 		    timer.start();
 		    if (auto* driver = qs::core::FrameAnimationDriver::instance()) driver->advance();
-		    qCDebug(logFrame) << "batch" << frames.size() << "animation_us"
-		                      << timer.nsecsElapsed() / 1000;
+		    if (frameTracingEnabled()) {
+			    qCDebug(logFrame) << "batch" << frames.size() << "animation_us"
+			                      << timer.nsecsElapsed() / 1000;
+		    }
 		    for (const auto& control: frames) {
 			    if (!control) continue;
 			    control->frameQueued = false;
@@ -464,15 +472,16 @@ void WaylandRenderControl::renderFrame() {
 	frame->repaint = std::exchange(this->repaintRequested, false);
 	this->frameInFlight = true;
 	this->frameRequested = false;
-	const auto synchronized = std::make_shared<QSemaphore>();
-	this->renderThread->submit([this, frame, synchronized] {
+	const auto acknowledge = std::exchange(this->damagePresented, false);
+	this->renderThread->submit([this, frame, acknowledge] {
 		QElapsedTimer timer;
 		timer.start();
+		if (acknowledge && this->tracker) this->tracker->presented();
 		this->beginFrame();
 		frame->failed = !this->rhi->isRecordingFrame();
 		if (!frame->failed) this->sync();
 		frame->syncNs = timer.nsecsElapsed();
-		synchronized->release();
+		this->synchronized.release();
 		if (!frame->failed) this->drawFrame(*frame);
 		QMetaObject::invokeMethod(
 		    this,
@@ -482,7 +491,7 @@ void WaylandRenderControl::renderFrame() {
 		    Qt::QueuedConnection
 		);
 	});
-	synchronized->acquire();
+	this->synchronized.acquire();
 }
 
 void WaylandRenderControl::drawFrame(Frame& frame) {
@@ -492,6 +501,7 @@ void WaylandRenderControl::drawFrame(Frame& frame) {
 		this->endFrame();
 		// Collect changes made during render; WindowDamageTracker::sync() forces full damage with margins.
 		frame.damage = this->tracker ? this->tracker->damage() : std::nullopt;
+		frame.pendingDamage = this->tracker && this->tracker->pendingDamageAfterPresent();
 		frame.renderNs = timer.nsecsElapsed();
 	});
 	frame.damage = this->tracker ? this->tracker->damage() : std::nullopt;
@@ -528,10 +538,12 @@ void WaylandRenderControl::finishFrame(const std::shared_ptr<Frame>& frame) {
 	                && frame->surfaceSize == waylandWindow->surfaceSize()
 	                && frame->scale == waylandWindow->scale();
 
-	qCDebug(logFrame) << "frame" << frame->serial << window << "polish_us" << frame->polishNs / 1000
-	                  << "sync_us" << frame->syncNs / 1000 << "render_us" << frame->renderNs / 1000
-	                  << "rendered" << frame->rendered << "valid" << valid << "failed"
-	                  << frame->failed;
+	if (frameTracingEnabled()) {
+		qCDebug(logFrame) << "frame" << frame->serial << window << "polish_us" << frame->polishNs / 1000
+		                  << "sync_us" << frame->syncNs / 1000 << "render_us" << frame->renderNs / 1000
+		                  << "rendered" << frame->rendered << "valid" << valid << "failed"
+		                  << frame->failed;
+	}
 
 	if (!valid) {
 		this->repaintRequested = true;
@@ -539,11 +551,12 @@ void WaylandRenderControl::finishFrame(const std::shared_ptr<Frame>& frame) {
 		return;
 	}
 
+	auto committed = false;
 	if (frame->failed) {
 		this->repaintRequested = true;
 		this->abortFrame();
 	} else if (frame->rendered) {
-		this->commitFrame(*frame, waylandWindow);
+		committed = this->commitFrame(*frame, waylandWindow);
 	} else {
 		this->commitWithoutFrame();
 	}
@@ -552,13 +565,14 @@ void WaylandRenderControl::finishFrame(const std::shared_ptr<Frame>& frame) {
 	QQuickWindowPrivate::get(window)->fireFrameSwapped();
 	// Only a committed buffer brings a frame callback; an unchanged window waits for the fallback instead of polling.
 	const auto animating = frame->animating && frame->rendered && !frame->failed;
-	if (std::exchange(this->frameRequested, false) || frame->pendingDamage || animating) {
+	const auto redraw = committed && frame->pendingDamage;
+	if (std::exchange(this->frameRequested, false) || redraw || animating) {
 		this->scheduleFrame();
 	}
 }
 
-void WaylandRenderControl::commitFrame(
-    Frame& frame,
+bool WaylandRenderControl::commitFrame(
+    const Frame& frame,
     QtWaylandClient::QWaylandWindow* waylandWindow
 ) {
 	PresentationFeedback* feedback = nullptr;
@@ -572,19 +586,14 @@ void WaylandRenderControl::commitFrame(
 	// Keep the damage until safeCommit() accepts a buffer.
 	if (!ref.busy()) {
 		PresentationTracker::cancel(feedback);
-		return;
+		return false;
 	}
 
 	frame.buffer->busy = true;
 	this->presented = true;
 	if (frame.revision == this->commitRevision) this->commitRequested = false;
-	if (!this->tracker) return;
-
-	// Redraw stale layer textures carried over by SceneDamageTracker::presented().
-	this->renderThread->invoke([this, &frame] {
-		this->tracker->presented();
-		frame.pendingDamage = this->tracker->pendingDamage();
-	});
+	this->damagePresented = true;
+	return true;
 }
 
 bool WaylandRenderControl::inputOnly(QtWaylandClient::QWaylandWindow* waylandWindow) const {

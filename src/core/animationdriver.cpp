@@ -14,6 +14,7 @@
 #include <qobject.h>
 #include <qscreen.h>
 #include <qtmetamacros.h>
+#include <qtypes.h>
 #include <qwindow.h>
 
 namespace qs::core {
@@ -120,7 +121,12 @@ FrameAnimationDriver::FrameAnimationDriver() {
 	this->elapsed.start();
 	this->fallback.setTimerType(Qt::PreciseTimer);
 	this->fallback.setSingleShot(true);
-	QObject::connect(&this->fallback, &QChronoTimer::timeout, this, &FrameAnimationDriver::advance);
+	QObject::connect(
+	    &this->fallback,
+	    &QChronoTimer::timeout,
+	    this,
+	    &FrameAnimationDriver::dispatchFallback
+	);
 	QObject::connect(this, &QAnimationDriver::started, this, [this] {
 		this->clock.reset();
 		this->armFallback();
@@ -130,10 +136,29 @@ FrameAnimationDriver::FrameAnimationDriver() {
 
 void FrameAnimationDriver::armFallback() {
 	if (!this->isRunning()) return;
+	const auto now = this->elapsed.nsecsElapsed();
+	this->fallbackDeadline = now + this->clock.delay(now);
+	if (this->fallback.isActive() && this->armedDeadline <= this->fallbackDeadline) return;
+	this->startFallback(now);
+}
+
+void FrameAnimationDriver::startFallback(qint64 now) {
+	this->fallback.stop();
+	this->armedDeadline = this->fallbackDeadline;
 	this->fallback.setInterval(
-	    std::chrono::nanoseconds(this->clock.delay(this->elapsed.nsecsElapsed()))
+	    std::chrono::nanoseconds(std::max<qint64>(1, this->fallbackDeadline - now))
 	);
 	this->fallback.start();
+}
+
+void FrameAnimationDriver::dispatchFallback() {
+	if (!this->isRunning()) return;
+	const auto now = this->elapsed.nsecsElapsed();
+	if (now < this->fallbackDeadline) {
+		this->startFallback(now);
+		return;
+	}
+	this->advance();
 }
 
 void FrameAnimationDriver::advance() {

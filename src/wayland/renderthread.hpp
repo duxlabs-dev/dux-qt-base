@@ -2,6 +2,7 @@
 
 #include <functional>
 #include <memory>
+#include <utility>
 
 #include <qobject.h>
 #include <qoffscreensurface.h>
@@ -19,7 +20,14 @@ public:
 	Q_DISABLE_COPY_MOVE(RenderThread);
 
 	void invoke(const std::function<void()>& work);
-	void submit(const std::function<void()>& work);
+	template <typename F>
+	void submit(F&& work) {
+		if (!this->threaded) {
+			work();
+			return;
+		}
+		QMetaObject::invokeMethod(&this->worker, std::forward<F>(work), Qt::QueuedConnection);
+	}
 	[[nodiscard]] QRhi* rhi() const { return this->device.get(); }
 	QThread* thread() { return this->worker.thread(); }
 

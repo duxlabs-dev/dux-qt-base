@@ -47,12 +47,16 @@ signals:
 private:
 	explicit FrameAnimationDriver();
 	void armFallback();
+	void startFallback(qint64 now);
+	void dispatchFallback();
 
 	QChronoTimer fallback;
 	QElapsedTimer elapsed;
 	FrameClock clock;
 	FrameSchedule schedule;
 	QSet<QWindow*> trackedWindows;
+	qint64 fallbackDeadline = 0;
+	qint64 armedDeadline = 0;
 };
 
 } // namespace qs::core

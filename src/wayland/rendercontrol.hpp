@@ -10,6 +10,7 @@
 #include <qpoint.h>
 #include <qquickwindow.h>
 #include <qregion.h>
+#include <qsemaphore.h>
 #include <qsize.h>
 #include <qtclasshelpermacros.h>
 #include <qtimer.h>
@@ -144,7 +145,7 @@ private:
 	void renderFrame();
 	void drawFrame(Frame& frame);
 	void finishFrame(const std::shared_ptr<Frame>& frame);
-	void commitFrame(Frame& frame, QtWaylandClient::QWaylandWindow* waylandWindow);
+	bool commitFrame(const Frame& frame, QtWaylandClient::QWaylandWindow* waylandWindow);
 	void abortFrame();
 	void commitWithoutFrame();
 	QRhiRenderTarget* decorationTarget(QSize size);
@@ -152,6 +153,7 @@ private:
 
 	std::unique_ptr<PresentationTracker> presentation;
 	std::unique_ptr<RenderThread> renderThread;
+	QSemaphore synchronized;
 	QRhi* rhi = nullptr;
 	SurfaceBufferPool pool;
 	std::unique_ptr<DecorationTarget> decoration;
@@ -167,6 +169,7 @@ private:
 	bool frameQueued = false;
 	bool frameInFlight = false;
 	bool frameRequested = false;
+	bool damagePresented = false;
 	quint64 commitRevision = 0;
 	qint64 requestedAt = 0;
 	qint64 inputAt = 0;

@@ -48,12 +48,4 @@ void RenderThread::invoke(const std::function<void()>& work) {
 	QMetaObject::invokeMethod(&this->worker, work, Qt::BlockingQueuedConnection);
 }
 
-void RenderThread::submit(const std::function<void()>& work) {
-	if (!this->threaded) {
-		work();
-		return;
-	}
-	QMetaObject::invokeMethod(&this->worker, work, Qt::QueuedConnection);
-}
-
 } // namespace qs::wayland::render

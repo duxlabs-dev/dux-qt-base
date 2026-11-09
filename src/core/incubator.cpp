@@ -68,7 +68,10 @@ void QsIncubationController::initLoop() {
 		this->wake.setSingleShot(true);
 		// clang-format off
 		QObject::connect(&this->wake, &QChronoTimer::timeout, this, &QsIncubationController::incubate);
-		QObject::connect(frameDriver, &qs::core::FrameAnimationDriver::betweenFrames, this, &QsIncubationController::incubate, Qt::QueuedConnection);
+		QObject::connect(frameDriver, &qs::core::FrameAnimationDriver::betweenFrames, this, [this] {
+			if (!this->incubatingObjectCount()) return;
+			QMetaObject::invokeMethod(this, &QsIncubationController::incubate, Qt::QueuedConnection);
+		});
 		// clang-format on
 		return;
 	}

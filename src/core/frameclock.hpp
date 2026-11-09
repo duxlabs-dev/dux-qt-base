@@ -15,7 +15,7 @@ public:
 		const auto rate = std::isfinite(refreshRate) && refreshRate > 0 ? refreshRate : 60;
 		const auto period = static_cast<std::int64_t>(2e9 / rate);
 		this->pending.try_emplace(window, now + period);
-		this->fallbackPeriod = period;
+		this->fallbackPeriod = std::max(MIN_UNRENDERED_PERIOD, period);
 	}
 
 	void forget(const void* window) { this->pending.erase(window); }
@@ -40,6 +40,9 @@ public:
 	}
 
 private:
+	// Animations no window renders tick at most 60 times a second.
+	static constexpr std::int64_t MIN_UNRENDERED_PERIOD = 16'666'667;
+
 	std::unordered_map<const void*, std::int64_t> pending;
 	std::int64_t lastSample = -1;
 	std::int64_t fallbackPeriod = 33333333;

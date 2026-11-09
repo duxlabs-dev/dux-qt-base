@@ -119,7 +119,7 @@ public:
 	void renderScene() override;
 	[[nodiscard]] std::optional<QRegion> damage() const;
 	[[nodiscard]] bool pendingPreprocess() const { return this->unmeasured; }
-	[[nodiscard]] bool pendingDamage() const { return !this->frameDamage.isEmpty(); }
+	[[nodiscard]] bool pendingDamageAfterPresent() const { return !this->nextDamage.isEmpty(); }
 	void presented();
 
 protected:
@@ -582,8 +582,8 @@ bool WindowDamageTracker::pendingPreprocess() const {
 	return this->tracker && this->tracker->pendingPreprocess();
 }
 
-bool WindowDamageTracker::pendingDamage() const {
-	return this->tracker && this->tracker->pendingDamage();
+bool WindowDamageTracker::pendingDamageAfterPresent() const {
+	return this->tracker && this->tracker->pendingDamageAfterPresent();
 }
 
 void WindowDamageTracker::beginRender() {
