@@ -10,6 +10,10 @@
 #include <qtenvironmentvariables.h>
 #include <unistd.h>
 
+#ifdef __GLIBC__
+#include <malloc.h>
+#endif
+
 #include "../core/instanceinfo.hpp"
 #include "../core/logging.hpp"
 #include "../core/paths.hpp"
@@ -23,6 +27,24 @@
 namespace qs::launch {
 
 namespace {
+
+void configureAllocator() {
+#ifdef __GLIBC__
+	const auto tunables = qgetenv("GLIBC_TUNABLES");
+	if (qEnvironmentVariableIsSet("MALLOC_MMAP_THRESHOLD_")
+	    || qEnvironmentVariableIsSet("MALLOC_TRIM_THRESHOLD_")
+	    || tunables.contains("glibc.malloc.mmap_threshold=")
+	    || tunables.contains("glibc.malloc.trim_threshold="))
+		return;
+
+	// glibc starts at these values; setting them stops it raising both after large frees.
+	// Runs before Qt starts any threads.
+	// NOLINTBEGIN(concurrency-mt-unsafe)
+	mallopt(M_MMAP_THRESHOLD, 128 * 1024);
+	mallopt(M_TRIM_THRESHOLD, 128 * 1024);
+	// NOLINTEND(concurrency-mt-unsafe)
+#endif
+}
 
 void checkCrashRelaunch(char** argv) {
 #if CRASH_HANDLER
@@ -117,6 +139,7 @@ void exitDaemon(int code) {
 }
 
 int main(int argc, char** argv) {
+	configureAllocator();
 	QCoreApplication::setApplicationName("quickshell");
 	QCoreApplication::setApplicationVersion(QS_VERSION);
 
