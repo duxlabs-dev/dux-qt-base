@@ -4,6 +4,8 @@
 #include <qstring.h>
 
 #include "../core/plugin.hpp"
+#include "../window/floatingwindow.hpp"
+#include "floatingwindow.hpp"
 #include "panel_window.hpp"
 #include "util.hpp"
 
@@ -14,7 +16,13 @@ class X11Plugin: public QsEnginePlugin {
 
 	bool applies() override { return QGuiApplication::platformName() == "xcb"; }
 
-	void init() override { XAtom::initAtoms(); }
+	void init() override {
+		XAtom::initAtoms();
+
+		ProxyFloatingWindow::setPlatformHook([](ProxyFloatingWindow* window) {
+			new XFloatingWindow(window);
+		});
+	}
 
 	void registerTypes() override {
 		qmlRegisterType<XPanelInterface>("Quickshell._X11Overlay", 1, 0, "PanelWindow");

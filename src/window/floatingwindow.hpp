@@ -4,6 +4,8 @@
 #include <qobject.h>
 #include <qproperty.h>
 #include <qsize.h>
+#include <qstring.h>
+#include <qstringfwd.h>
 #include <qtmetamacros.h>
 
 #include "proxywindow.hpp"
@@ -26,6 +28,11 @@ public:
 	[[nodiscard]] QObject* parentWindow() const;
 	void setParentWindow(QObject* window);
 
+	[[nodiscard]] QString foreignParentHandle(QLatin1StringView prefix) const;
+
+	using PlatformHook = void (*)(ProxyFloatingWindow* window);
+	static void setPlatformHook(PlatformHook hook);
+
 	// Setting geometry while the window is visible makes the content item shrink but not the window
 	// which is awful so we disable it for floating windows.
 	void trySetWidth(qint32 implicitWidth) override;
@@ -36,6 +43,8 @@ signals:
 	void maximumSizeChanged();
 	void titleChanged();
 	void parentWindowChanged();
+	void appIdChanged();
+	void foreignParentChanged();
 
 private slots:
 	void onParentDestroyed();
@@ -64,6 +73,20 @@ public:
 	    QString,
 	    bTitle,
 	    &ProxyFloatingWindow::onTitleChanged
+	);
+
+	Q_OBJECT_BINDABLE_PROPERTY(
+	    ProxyFloatingWindow,
+	    QString,
+	    bAppId,
+	    &ProxyFloatingWindow::appIdChanged
+	);
+
+	Q_OBJECT_BINDABLE_PROPERTY(
+	    ProxyFloatingWindow,
+	    QString,
+	    bForeignParent,
+	    &ProxyFloatingWindow::foreignParentChanged
 	);
 
 	Q_OBJECT_BINDABLE_PROPERTY(
@@ -103,6 +126,23 @@ class FloatingWindowInterface: public WindowInterface {
 	///
 	/// > [!NOTE] This property cannot be changed after the window is visible.
 	Q_PROPERTY(QObject* parentWindow READ parentWindow WRITE setParentWindow NOTIFY parentWindowChanged);
+	/// Application id the window system uses to group the window, match it to a desktop entry
+	/// and apply window rules. Empty uses the instance's app id (`//@ pragma AppId`).
+	///
+	/// Sets the xdg_toplevel app id on Wayland and `WM_CLASS` on X11. Other platforms ignore it.
+	///
+	/// > [!NOTE] Window rules decided when the window was first shown may not be re-evaluated
+	/// > when this changes while the window is visible.
+	Q_PROPERTY(QString appId READ default WRITE default NOTIFY appIdChanged BINDABLE bindableAppId);
+	/// Window of another application to make this window a child of, as a window identifier in the
+	/// [xdg-desktop-portal format]: `wayland:<handle>` with a handle exported through
+	/// xdg-foreign-unstable-v2, or `x11:<window id in hex>`. Identifiers for another platform are
+	/// ignored, and so is this property when @@parentWindow is set.
+	///
+	/// On X11 the window is marked as a dialog so the window manager honors the parent.
+	///
+	/// [xdg-desktop-portal format]: https://flatpak.github.io/xdg-desktop-portal/docs/window-identifiers.html
+	Q_PROPERTY(QString foreignParent READ default WRITE default NOTIFY foreignParentChanged BINDABLE bindableForeignParent);
 	// clang-format on
 	QML_NAMED_ELEMENT(FloatingWindow);
 
@@ -116,6 +156,8 @@ public:
 	[[nodiscard]] QBindable<QSize> bindableMinimumSize() { return &this->window->bMinimumSize; }
 	[[nodiscard]] QBindable<QSize> bindableMaximumSize() { return &this->window->bMaximumSize; }
 	[[nodiscard]] QBindable<QString> bindableTitle() { return &this->window->bTitle; }
+	[[nodiscard]] QBindable<QString> bindableAppId() { return &this->window->bAppId; }
+	[[nodiscard]] QBindable<QString> bindableForeignParent() { return &this->window->bForeignParent; }
 
 	[[nodiscard]] bool isMinimized() const;
 	void setMinimized(bool minimized);
@@ -140,6 +182,8 @@ signals:
 	void maximizedChanged();
 	void fullscreenChanged();
 	void parentWindowChanged();
+	void appIdChanged();
+	void foreignParentChanged();
 
 private slots:
 	void onWindowConnected();

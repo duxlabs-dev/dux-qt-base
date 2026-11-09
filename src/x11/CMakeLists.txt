@@ -3,6 +3,7 @@ find_package(XCB REQUIRED COMPONENTS XCB)
 qt_add_library(quickshell-x11 STATIC
 	util.cpp
 	panel_window.cpp
+	floatingwindow.cpp
 )
 
 qt_add_qml_module(quickshell-x11

@@ -25,6 +25,10 @@ Cherry-picked 2026-11-07, without their changelog hunks:
 - #890 `launch: set the application version so GetServerInformation reports one`
 - #1219 `io/process: let qmllint read qprocess enums`
 
+Reworked rather than cherry-picked:
+
+- #899 `wayland/window: add WaylandWindow attached object for overriding App ID`: its app id code backs `FloatingWindow.appId` instead of a `WaylandWindow` attached type, so the property also works on X11.
+
 Drop each from this list once it lands upstream.
 
 ## modified files
@@ -43,6 +47,13 @@ it when the fork diverges further.
 - `src/main.cpp`: calls `dqb_main`.
 - `src/build/build.hpp.in`: version macros read `PROJECT_VERSION`.
 - `src/crash/interface.cpp`: crash window names dux-qt-base.
+- `src/window/floatingwindow.*`: `appId` and `foreignParent` properties
+  and a platform hook. `src/wayland/floatingwindow.*`,
+  `src/wayland/xdg_foreign.*`, `src/x11/floatingwindow.*`: new, the Wayland
+  (xdg_toplevel app id, xdg-foreign-v2) and X11 (`WM_CLASS`,
+  `WM_TRANSIENT_FOR`) sides. `src/wayland/CMakeLists.txt`,
+  `src/wayland/init.cpp`, `src/x11/CMakeLists.txt`, `src/x11/init.cpp`
+  wire them up.
 - `assets/`: removed.
 - `README.md`, `BUILD.md`, `Justfile`, `default.nix`, `.github/`: fork
   documentation, packaging, and CI.

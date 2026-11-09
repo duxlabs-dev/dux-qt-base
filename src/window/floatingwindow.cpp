@@ -4,12 +4,18 @@
 #include <qobject.h>
 #include <qqmlengine.h>
 #include <qqmlinfo.h>
+#include <qstring.h>
+#include <qstringfwd.h>
 #include <qtmetamacros.h>
 #include <qtypes.h>
 #include <qwindow.h>
 
 #include "proxywindow.hpp"
 #include "windowinterface.hpp"
+
+namespace {
+ProxyFloatingWindow::PlatformHook platformHook = nullptr; // NOLINT
+}
 
 ProxyFloatingWindow::ProxyFloatingWindow(QObject* parent): ProxyWindowBase(parent) {
 	this->bTargetVisible.setBinding([this] {
@@ -18,7 +24,11 @@ ProxyFloatingWindow::ProxyFloatingWindow(QObject* parent): ProxyWindowBase(paren
 		if (!parent) return true;
 		return parent->bindableBackerVisibility().value();
 	});
+
+	if (platformHook) platformHook(this);
 }
+
+void ProxyFloatingWindow::setPlatformHook(PlatformHook hook) { platformHook = hook; }
 
 void ProxyFloatingWindow::targetVisibleChanged() {
 	if (this->window && this->bParentProxyWindow) {
@@ -88,6 +98,12 @@ void ProxyFloatingWindow::onMaximumSizeChanged() {
 
 QObject* ProxyFloatingWindow::parentWindow() const { return this->mParentWindow; }
 
+QString ProxyFloatingWindow::foreignParentHandle(QLatin1StringView prefix) const {
+	auto id = this->bForeignParent.value();
+	if (this->mParentWindow || !id.startsWith(prefix)) return {};
+	return id.sliced(prefix.size());
+}
+
 void ProxyFloatingWindow::setParentWindow(QObject* window) {
 	if (window == this->mParentWindow) return;
 
@@ -134,6 +150,8 @@ FloatingWindowInterface::FloatingWindowInterface(QObject* parent)
 	QObject::connect(this->window, &ProxyFloatingWindow::minimumSizeChanged, this, &FloatingWindowInterface::minimumSizeChanged);
 	QObject::connect(this->window, &ProxyFloatingWindow::maximumSizeChanged, this, &FloatingWindowInterface::maximumSizeChanged);
 	QObject::connect(this->window, &ProxyFloatingWindow::parentWindowChanged, this, &FloatingWindowInterface::parentWindowChanged);
+	QObject::connect(this->window, &ProxyFloatingWindow::appIdChanged, this, &FloatingWindowInterface::appIdChanged);
+	QObject::connect(this->window, &ProxyFloatingWindow::foreignParentChanged, this, &FloatingWindowInterface::foreignParentChanged);
 	QObject::connect(this->window, &ProxyWindowBase::windowConnected, this, &FloatingWindowInterface::onWindowConnected);
 	// clang-format on
 }

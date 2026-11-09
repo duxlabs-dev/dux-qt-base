@@ -90,7 +90,11 @@ qt_add_library(quickshell-wayland STATIC
 	xdgshell.cpp
 	util.cpp
 	output_tracking.cpp
+	floatingwindow.cpp
+	xdg_foreign.cpp
 )
+
+wl_proto(wlp-xdg-foreign xdg-foreign-unstable-v2 "${WAYLAND_PROTOCOLS}/unstable/xdg-foreign")
 
 # required for wl_proxy_safe_deref
 target_link_libraries(quickshell-wayland PRIVATE ${CMAKE_DL_LIBS})
@@ -157,7 +161,7 @@ add_subdirectory(windowmanager)
 
 # widgets for qmenu
 target_link_libraries(quickshell-wayland PRIVATE
-	Qt::Quick Qt::Widgets Qt::WaylandClient Qt::WaylandClientPrivate
+	Qt::Quick Qt::Widgets Qt::WaylandClient Qt::WaylandClientPrivate wlp-xdg-foreign
 )
 
 target_link_libraries(quickshell-wayland-init PRIVATE Qt::Quick)
