@@ -20,6 +20,7 @@ qt_add_library(quickshell-core STATIC
 	lazyloader.cpp
 	easingcurve.cpp
 	iconimageprovider.cpp
+	icontheme.cpp
 	imageprovider.cpp
 	transformwatcher.cpp
 	boundcomponent.cpp

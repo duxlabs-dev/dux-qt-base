@@ -1,4 +1,5 @@
 #include "desktopentrymonitor.hpp"
+#include <algorithm>
 
 #include <qdir.h>
 #include <qfileinfo.h>
@@ -20,6 +21,12 @@ void addPathAndParents(QFileSystemWatcher& watcher, const QString& path) {
 		if (parent == p) break;
 		p = parent;
 	}
+}
+
+bool isEntryDirectory(const QString& path) {
+	return std::ranges::any_of(DesktopEntryManager::desktopPaths(), [&](const QString& entryPath) {
+		return path == entryPath || path.startsWith(entryPath + '/');
+	});
 }
 } // namespace
 
@@ -61,8 +68,23 @@ void DesktopEntryMonitor::scanAndWatch(const QString& dirPath) {
 	for (const auto& subdir: subdirs) this->watcher.addPath(subdir.absoluteFilePath());
 }
 
-void DesktopEntryMonitor::onDirectoryChanged(const QString& /*path*/) {
+// Ancestors are watched for an applications directory coming back, not for their other children.
+void DesktopEntryMonitor::onDirectoryChanged(const QString& path) {
+	if (!isEntryDirectory(path) && !this->watchRestoredPaths()) return;
 	this->debounceTimer.start();
+}
+
+bool DesktopEntryMonitor::watchRestoredPaths() {
+	const auto watched = this->watcher.directories();
+	auto restored = false;
+
+	for (const auto& path: DesktopEntryManager::desktopPaths()) {
+		if (watched.contains(path) || !QDir(path).exists()) continue;
+		this->scanAndWatch(path);
+		restored = true;
+	}
+
+	return restored;
 }
 
 void DesktopEntryMonitor::processChanges() { emit this->desktopEntriesChanged(); }

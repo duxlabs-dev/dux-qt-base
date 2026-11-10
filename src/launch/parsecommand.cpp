@@ -71,6 +71,7 @@ int parseCommand(int argc, char** argv, CommandState& state) {
 
 		auto* debug = group->add_option("--debug", state.debug.port)
 		                  ->description("Open the given port for a QML debugger connection.")
+		                  ->envname("QS_DEBUG_PORT")
 		                  ->check(CLI::Range(0, 65535));
 
 		group->add_flag("--waitfordebug", state.debug.wait)

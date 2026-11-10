@@ -29,6 +29,7 @@
 #include "animationdriver.hpp"
 #include "generation.hpp"
 #include "iconimageprovider.hpp"
+#include "icontheme.hpp"
 #include "instanceinfo.hpp"
 #include "paths.hpp"
 #include "qmlscreen.hpp"
@@ -153,6 +154,9 @@ QuickshellGlobal::QuickshellGlobal(QObject* parent): QObject(parent) {
 	QObject::connect(QuickshellSettings::instance(), &QuickshellSettings::lastWindowClosed, this, &QuickshellGlobal::lastWindowClosed);
 
 	QObject::connect(QuickshellTracked::instance(), &QuickshellTracked::screensChanged, this, &QuickshellGlobal::screensChanged);
+
+	QObject::connect(IconThemeIndex::instance(), &IconThemeIndex::themeChanged, this, &QuickshellGlobal::iconThemeChanged);
+	QObject::connect(IconThemeIndex::instance(), &IconThemeIndex::revisionChanged, this, &QuickshellGlobal::iconIndexRevisionChanged);
 	// clang-format on
 
 	QObject::connect(
@@ -375,6 +379,18 @@ QString QuickshellGlobal::iconPath(const QString& icon, const QString& fallback)
 }
 
 bool QuickshellGlobal::hasThemeIcon(const QString& icon) { return QIcon::hasThemeIcon(icon); }
+
+QString QuickshellGlobal::iconFile(const QString& icon) {
+	return IconThemeIndex::instance()->file(icon);
+}
+
+QString QuickshellGlobal::iconTheme() { return QIcon::themeName(); }
+
+void QuickshellGlobal::setIconTheme(const QString& theme) {
+	IconThemeIndex::instance()->setTheme(theme);
+}
+
+qint32 QuickshellGlobal::iconIndexRevision() { return IconThemeIndex::instance()->revision(); }
 
 bool QuickshellGlobal::hasVersion(qint32 major, qint32 minor, const QStringList& features) {
 	return qs::scan::env::PreprocEnv::hasVersion(major, minor, features);

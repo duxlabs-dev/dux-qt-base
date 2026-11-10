@@ -135,6 +135,14 @@ class QuickshellGlobal: public QObject {
 	/// If true then the configuration will be reloaded whenever any files change.
 	/// Defaults to true.
 	Q_PROPERTY(bool watchFiles READ watchFiles WRITE setWatchFiles NOTIFY watchFilesChanged);
+	/// The name of the icon theme. Setting it replaces the theme of @@iconPath() and @@iconFile().
+	/// An empty name returns to the system's icon theme.
+	Q_PROPERTY(QString iconTheme READ iconTheme WRITE setIconTheme NOTIFY iconThemeChanged);
+	/// Increases each time the files @@iconFile() returns may have changed, starting from 0.
+	///
+	/// The icon theme is indexed in the background the first time @@iconFile() is called or
+	/// @@iconTheme is set, and again when it or the installed applications change.
+	Q_PROPERTY(qint32 iconIndexRevision READ iconIndexRevision NOTIFY iconIndexRevisionChanged);
 	/// The system clipboard.
 	///
 	/// > [!WARNING] Under wayland the clipboard will be empty unless a quickshell window is focused.
@@ -237,6 +245,13 @@ public:
 	Q_INVOKABLE static QString iconPath(const QString& icon, const QString& fallback);
 	/// Check if specified icon has an available icon in your icon theme
 	Q_INVOKABLE static bool hasThemeIcon(const QString& icon);
+	/// Returns the path of the file the icon theme has for an icon, or an empty string.
+	///
+	/// Unlike @@iconPath() this never reads the filesystem: it answers from an index of the
+	/// theme, the themes it inherits, hicolor and the pixmaps directories. Application icons
+	/// are preferred, then scalable and large ones. It returns an empty string until the index
+	/// is ready, so read @@iconIndexRevision in bindings that call it.
+	Q_INVOKABLE static QString iconFile(const QString& icon);
 	/// Returns a map from strings to plain values, kept outside the JavaScript heap so garbage
 	/// collection skips its entries. Values are stored as variants, so objects are copied.
 	Q_INVOKABLE static QObject* createStringMap();
@@ -295,6 +310,11 @@ public:
 	[[nodiscard]] bool watchFiles() const;
 	void setWatchFiles(bool watchFiles);
 
+	[[nodiscard]] static QString iconTheme();
+	static void setIconTheme(const QString& theme);
+
+	[[nodiscard]] static qint32 iconIndexRevision();
+
 	[[nodiscard]] static QString clipboardText();
 	static void setClipboardText(const QString& text);
 
@@ -317,6 +337,8 @@ signals:
 	void screensChanged();
 	void workingDirectoryChanged();
 	void watchFilesChanged();
+	void iconThemeChanged();
+	void iconIndexRevisionChanged();
 	void clipboardTextChanged();
 
 private slots:
