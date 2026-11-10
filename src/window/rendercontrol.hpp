@@ -20,6 +20,10 @@ public:
 
 	// Commit surface state even without a repaint; see WaylandRenderControl::commitWithoutFrame().
 	virtual void requestCommit() = 0;
+
+signals:
+	// Surface state was committed, with a new buffer if `buffer` is set.
+	void committed(bool buffer);
 };
 
 } // namespace qs::window

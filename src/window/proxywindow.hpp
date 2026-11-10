@@ -277,11 +277,16 @@ public:
 
 	void requestCommit();
 
+	// Null on Qt's render loop.
+	[[nodiscard]] qs::window::WindowRenderControl* renderControl() const {
+		return this->mRenderControl;
+	}
+
 private slots:
 	void onSceneGraphInitialized();
 
 private:
-	qs::window::WindowRenderControl* renderControl = nullptr;
+	qs::window::WindowRenderControl* mRenderControl = nullptr;
 };
 
 class ProxiedWindow: public QsQuickWindowBase {

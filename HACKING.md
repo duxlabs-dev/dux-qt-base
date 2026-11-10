@@ -199,9 +199,6 @@ where all parts are optional. If module or type are not specified they will
 be inferred as the current module. Member can be a `property`, `function()` or `signal(s)`.
 Look at existing code for how it works.
 
-If you have made a user visible change since the last tagged release, describe it in
-[changelog/next.md](changelog/next.md).
-
 ## Contributing
 
 ### Commits

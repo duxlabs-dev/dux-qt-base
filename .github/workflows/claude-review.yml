@@ -130,7 +130,7 @@ jobs:
             - QML API: a renamed or removed QML type, property, signal or invokable, or a changed signature or default, breaks the dux shells. A Q_PROPERTY without a NOTIFY, or a setter that emits its change signal when the value didn't change.
             - Contract drift: the C API (include/dux-qt-base/, src/capi.cpp, dux-qt-base.pc.in) and SOVERSION out of step with each other, or the same behaviour implemented separately for Wayland and X11 that can disagree.
             - Security: command injection, unsafe file or socket permissions, PAM and polkit errors treated as success, secrets in code.
-            - Fork bookkeeping: a change to an upstream file not listed under "modified files" in UPSTREAM.md (the GPL modification notice), or a cherry-picked upstream PR not listed under its section.
+            - Fork bookkeeping: a cherry-picked upstream PR not listed under its section in UPSTREAM.md.
 
             Don't flag naming, formatting (clang-format and clang-tidy cover it), HACKING.md layout preferences, pre-existing issues, anything a linter or compiler catches, problems that need unusual input to trigger, or missing tests. Deterministic mismatches are not speculative. Not sure it's real: don't post it.
 

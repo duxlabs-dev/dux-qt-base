@@ -637,7 +637,7 @@ QList<std::function<void(QQuickWindow*)>> SCENEGRAPH_INIT_CALLBACKS; // NOLINT
 
 QsQuickWindowBase::QsQuickWindowBase(qs::window::WindowRenderControl* renderControl)
     : QQuickWindow(renderControl)
-    , renderControl(renderControl) {
+    , mRenderControl(renderControl) {
 	QObject::connect(
 	    this,
 	    &QQuickWindow::sceneGraphInitialized,
@@ -649,10 +649,10 @@ QsQuickWindowBase::QsQuickWindowBase(qs::window::WindowRenderControl* renderCont
 }
 
 // Destroy the control first; QQuickRenderControl::~QQuickRenderControl() accesses the window.
-QsQuickWindowBase::~QsQuickWindowBase() { delete this->renderControl; }
+QsQuickWindowBase::~QsQuickWindowBase() { delete this->mRenderControl; }
 
 void QsQuickWindowBase::requestCommit() {
-	if (this->renderControl) this->renderControl->requestCommit();
+	if (this->mRenderControl) this->mRenderControl->requestCommit();
 }
 
 void QsQuickWindowBase::onSceneGraphInitialized() {

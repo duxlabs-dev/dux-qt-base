@@ -22,6 +22,7 @@
 
 #include "../../window/panelinterface.hpp"
 #include "../../window/proxywindow.hpp"
+#include "../../window/rendercontrol.hpp"
 #include "../activation.hpp"
 #include "shell_integration.hpp"
 #include "wlr_layershell.hpp"
@@ -79,6 +80,10 @@ void LayerSurfaceBridge::commitState() {
 	this->surface->commit();
 
 	if (auto* window = qobject_cast<QsQuickWindowBase*>(this->parent())) window->requestCommit();
+}
+
+void LayerSurfaceBridge::releaseKeyboardFocus() {
+	if (this->surface) this->surface->releaseKeyboardFocus();
 }
 
 LayerSurfaceBridge* LayerSurfaceBridge::get(QWindow* window) {
@@ -175,7 +180,8 @@ LayerSurface::LayerSurface(LayerShellIntegration* shell, QtWaylandClient::QWayla
 	    QHighDpi::toNativePixels(s.margins.left, qwindow)
 	);
 	this->set_exclusive_zone(QHighDpi::toNativePixels(s.exclusiveZone, qwindow));
-	this->set_keyboard_interactivity(toWaylandKeyboardFocus(s.keyboardFocus));
+	if (!s.focusOnMap) this->holdKeyboardFocus(true);
+	this->set_keyboard_interactivity(toWaylandKeyboardFocus(this->keyboardFocus()));
 
 	this->bridge->surface = this;
 }
@@ -244,11 +250,57 @@ void LayerSurface::commit() {
 		this->set_exclusive_zone(QHighDpi::toNativePixels(p.exclusiveZone, this->qwindow()));
 	}
 
-	if (p.keyboardFocus != c.keyboardFocus) {
-		this->set_keyboard_interactivity(toWaylandKeyboardFocus(p.keyboardFocus));
+	const auto keyboardFocus = this->keyboardFocus();
+	if (keyboardFocus != c.keyboardFocus) {
+		this->set_keyboard_interactivity(toWaylandKeyboardFocus(keyboardFocus));
 	}
 
 	c = p;
+	c.keyboardFocus = keyboardFocus;
+}
+
+void LayerSurface::releaseKeyboardFocus() {
+	if (this->committed.keyboardFocus != WlrKeyboardFocus::OnDemand) return;
+
+	this->holdKeyboardFocus(false);
+	this->bridge->commitState();
+}
+
+void LayerSurface::holdKeyboardFocus(bool untilMapped) {
+	auto* window = qobject_cast<QsQuickWindowBase*>(this->qwindow());
+	auto* control = window ? window->renderControl() : nullptr;
+	if (!control) {
+		static auto logged = false;
+		if (!std::exchange(logged, true)) {
+			qWarning() << "Layershell keyboard focus is only withheld or released with render control.";
+		}
+
+		return;
+	}
+
+	this->keyboardFocusHeld = true;
+	this->awaitingMap = untilMapped;
+	this->commitConnection = QObject::connect(
+	    control,
+	    &qs::window::WindowRenderControl::committed,
+	    this,
+	    &LayerSurface::onCommitted
+	);
+}
+
+void LayerSurface::onCommitted(bool buffer) {
+	if (this->awaitingMap && !buffer) return;
+
+	QObject::disconnect(this->commitConnection);
+	this->keyboardFocusHeld = false;
+	this->awaitingMap = false;
+	this->bridge->commitState();
+}
+
+WlrKeyboardFocus::Enum LayerSurface::keyboardFocus() const {
+	const auto focus = this->bridge->state.keyboardFocus;
+	if (this->keyboardFocusHeld && focus == WlrKeyboardFocus::OnDemand) return WlrKeyboardFocus::None;
+	return focus;
 }
 
 void LayerSurface::attachPopup(QtWaylandClient::QWaylandShellSurface* popup) {

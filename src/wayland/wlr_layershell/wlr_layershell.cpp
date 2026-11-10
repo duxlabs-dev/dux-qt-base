@@ -133,6 +133,10 @@ void WlrLayershell::setScreen(QuickshellScreenInfo* screen) {
 
 void WlrLayershell::onStateChanged() { this->schedulePolish(); }
 
+void WlrLayershell::releaseKeyboardFocus() {
+	if (this->bridge) this->bridge->releaseKeyboardFocus();
+}
+
 bool WlrLayershell::aboveWindows() const { return this->layer() > WlrLayer::Bottom; }
 
 void WlrLayershell::setAboveWindows(bool aboveWindows) {
@@ -153,6 +157,7 @@ LayerSurfaceState WlrLayershell::computeState() const {
 	    .layer = this->bLayer,
 	    .exclusiveZone = this->bcExclusiveZone,
 	    .keyboardFocus = this->bKeyboardFocus,
+	    .focusOnMap = this->bFocusOnMap,
 	    .compositorPickesScreen = this->compositorPicksScreen,
 	    .mNamespace = this->bNamespace,
 	};

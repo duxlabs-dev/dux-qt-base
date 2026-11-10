@@ -22,6 +22,7 @@ struct LayerSurfaceState {
 	WlrLayer::Enum layer = WlrLayer::Top;
 	qint32 exclusiveZone = 0;
 	WlrKeyboardFocus::Enum keyboardFocus = WlrKeyboardFocus::None;
+	bool focusOnMap = true;
 
 	bool compositorPickesScreen = true;
 	QString mNamespace = "quickshell";
@@ -38,6 +39,7 @@ public:
 	LayerSurfaceState state;
 
 	void commitState();
+	void releaseKeyboardFocus();
 
 	// Returns a bridge if attached, otherwise nullptr.
 	static LayerSurfaceBridge* get(QWindow* window);
@@ -71,16 +73,24 @@ public:
 	void attachPopup(QtWaylandClient::QWaylandShellSurface* popup) override;
 
 	void commit();
+	void releaseKeyboardFocus();
 
 private:
 	void zwlr_layer_surface_v1_configure(quint32 serial, quint32 width, quint32 height) override;
 	void zwlr_layer_surface_v1_closed() override;
 
 	QWindow* qwindow();
+	// Sends OnDemand as None until the next commit, or the next one with a buffer if `untilMapped`.
+	void holdKeyboardFocus(bool untilMapped);
+	void onCommitted(bool buffer);
+	[[nodiscard]] WlrKeyboardFocus::Enum keyboardFocus() const;
 
 	LayerSurfaceBridge* bridge;
 	bool configured = false;
 	QSize size;
+	QMetaObject::Connection commitConnection;
+	bool keyboardFocusHeld = false;
+	bool awaitingMap = false;
 
 	LayerSurfaceState committed;
 };

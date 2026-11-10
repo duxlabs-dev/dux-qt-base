@@ -31,57 +31,16 @@ Reworked rather than cherry-picked:
 
 Drop each from this list once it lands upstream.
 
-## modified files
+## modifications
 
-This section is the modification notice required by GPL section 5(a). Update
-it when the fork diverges further.
+This section is the modification notice required by GPL section 5(a).
+dux-qt-base is a modified version of quickshell, changed since the import on
+2026-11-06. The fork's commits and the files they touch:
 
-- `CMakeLists.txt`: project renamed to dux-qt-base, position independent
-  code on, `BUILD_EXECUTABLE` option, jemalloc and crash handler default
-  off, bug report URL, dropped the qs symlink and desktop/icon installs.
-- `src/CMakeLists.txt`: `quickshell` target is a shared library named
-  dux-qt-base with SOVERSION 0, installs header and pkg-config file, optional
-  standalone executable.
-- `src/capi.cpp`, `include/dux-qt-base/dux_qt_base.h`,
-  `dux-qt-base.pc.in`: new, C entry points and pkg-config metadata.
-- `src/main.cpp`: calls `dqb_main`.
-- `src/build/build.hpp.in`: version macros read `PROJECT_VERSION`.
-- `src/crash/interface.cpp`: crash window names dux-qt-base.
-- `src/window/floatingwindow.*`: `appId` and `foreignParent` properties
-  and a platform hook. `src/wayland/floatingwindow.*`,
-  `src/wayland/xdg_foreign.*`, `src/x11/floatingwindow.*`: new, the Wayland
-  (xdg_toplevel app id, xdg-foreign-v2) and X11 (`WM_CLASS`,
-  `WM_TRANSIENT_FOR`) sides. `src/wayland/CMakeLists.txt`,
-  `src/wayland/init.cpp`, `src/x11/CMakeLists.txt`, `src/x11/init.cpp`
-  wire them up.
-- `assets/`: removed.
-- `README.md`, `BUILD.md`, `Justfile`, `default.nix`, `.github/`: fork
-  documentation, packaging, and CI.
-- `src/core/animationdriver.*`, `frameclock.hpp`, `frameschedule.hpp`,
-  `framephase.hpp`: batched animation sampling, per-window fallback deadlines,
-  predicted frame starts, and animation time locked to each window's frame
-  cadence.
-- `src/core/incubator.*`: with render control, incubation runs between
-  predicted frames and yields while a rendered frame waits for its commit.
-- `src/core/qmlglobal.*`, `spring.hpp`: analytical spring coefficients
-  exposed through `Quickshell.springCoefficients()`, plus
-  `Quickshell.frameDelta()` and `Quickshell.springFrameCoefficients()`.
-- `src/wayland/rendercontrol.*`, `renderthread.*`, `presentation.*`,
-  `CMakeLists.txt`: per-window render threads with a per-frame animator driver,
-  bounded buffer allocation during resize, a new scene after device loss, and
-  optional compositor presentation timing.
-- `src/window/rendercontrol.*`: the render control and its animation driver
-  are only enabled where the platform can create one, on OpenGL or Vulkan.
-- `src/services/notifications/`: activation tokens for actions, sent even if
-  the requesting window is destroyed first; image rows padded to the rowstride.
-- `src/window/damage.*`, `curvestroke.*`: scene graph callbacks run on the
-  render thread; GUI invalidation uses an atomic flag; curve renderer shapes
-  and text are bounded instead of damaging the whole window.
-- `src/wayland/buffer/*`, `src/wayland/renderthread.*`: render control on
-  Vulkan. Buffers requested as render targets are restricted to modifiers the
-  device can draw into, imported as color attachments, and released to the
-  foreign queue family after each frame. `src/window/proxywindow.cpp` and
-  `src/wayland/session_lock.cpp` request `VK_EXT_queue_family_foreign`.
+```sh
+git log upstream/master..
+git diff --stat upstream/master...
+```
 
 ## syncing
 
@@ -93,4 +52,5 @@ git fetch upstream
 git merge upstream/master
 ```
 
-Expect conflicts only in the files listed above.
+Expect conflicts only in files the fork changed, which
+`git diff --name-only upstream/master...` lists.

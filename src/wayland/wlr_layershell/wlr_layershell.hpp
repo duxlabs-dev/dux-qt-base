@@ -106,6 +106,14 @@ class WlrLayershell: public ProxyWindowBase {
 	Q_PROPERTY(QString namespace READ ns WRITE setNamespace NOTIFY namespaceChanged);
 	/// The degree of keyboard focus taken. Defaults to `KeyboardFocus.None`.
 	Q_PROPERTY(qs::wayland::layershell::WlrKeyboardFocus::Enum keyboardFocus READ keyboardFocus WRITE setKeyboardFocus NOTIFY keyboardFocusChanged);
+	/// If an `OnDemand` window may be focused as it is shown. Defaults to true.
+	///
+	/// A compositor may focus a layer that is shown with @@keyboardFocus set to `OnDemand`.
+	/// If false, the layer is shown with `None` and switches to `OnDemand` in a later commit.
+	/// Read when the window is shown.
+	///
+	/// > [!NOTE] Requires the `RenderControl` pragma. The layer is shown with `OnDemand` otherwise.
+	Q_PROPERTY(bool focusOnMap READ focusOnMap WRITE setFocusOnMap NOTIFY focusOnMapChanged);
 
 	QSDOC_HIDE Q_PROPERTY(Anchors anchors READ anchors WRITE setAnchors NOTIFY anchorsChanged);
 	QSDOC_HIDE Q_PROPERTY(qint32 exclusiveZone READ exclusiveZone WRITE setExclusiveZone NOTIFY exclusiveZoneChanged);
@@ -132,6 +140,14 @@ public:
 
 	void setScreen(QuickshellScreenInfo* screen) override;
 
+	/// Gives up keyboard focus taken with @@keyboardFocus set to `OnDemand`.
+	///
+	/// The layer switches to `None` for one commit and back to `OnDemand` in the next,
+	/// so it can be focused again.
+	///
+	/// > [!NOTE] Requires the `RenderControl` pragma. Does nothing otherwise.
+	Q_INVOKABLE void releaseKeyboardFocus();
+
 	[[nodiscard]] WlrLayer::Enum layer() const { return this->bLayer; }
 	void setLayer(WlrLayer::Enum layer) { this->bLayer = layer; }
 
@@ -140,6 +156,9 @@ public:
 
 	[[nodiscard]] WlrKeyboardFocus::Enum keyboardFocus() const { return this->bKeyboardFocus; }
 	void setKeyboardFocus(WlrKeyboardFocus::Enum focus) { this->bKeyboardFocus = focus; }
+
+	[[nodiscard]] bool focusOnMap() const { return this->bFocusOnMap; }
+	void setFocusOnMap(bool focusOnMap) { this->bFocusOnMap = focusOnMap; }
 
 	[[nodiscard]] Anchors anchors() const { return this->bAnchors; }
 	void setAnchors(Anchors anchors) { this->bAnchors = anchors; }
@@ -170,6 +189,7 @@ signals:
 	void layerChanged();
 	void namespaceChanged();
 	void keyboardFocusChanged();
+	void focusOnMapChanged();
 	QSDOC_HIDE void anchorsChanged();
 	QSDOC_HIDE void exclusiveZoneChanged();
 	QSDOC_HIDE void exclusionModeChanged();
@@ -195,6 +215,7 @@ private:
 	Q_OBJECT_BINDABLE_PROPERTY(WlrLayershell, Margins, bMargins, &WlrLayershell::marginsChanged);
 	Q_OBJECT_BINDABLE_PROPERTY(WlrLayershell, qint32, bExclusiveZone, &WlrLayershell::exclusiveZoneChanged);
 	Q_OBJECT_BINDABLE_PROPERTY(WlrLayershell, WlrKeyboardFocus::Enum, bKeyboardFocus, &WlrLayershell::keyboardFocusChanged);
+	Q_OBJECT_BINDABLE_PROPERTY_WITH_ARGS(WlrLayershell, bool, bFocusOnMap, true, &WlrLayershell::focusOnMapChanged);
 	Q_OBJECT_BINDABLE_PROPERTY_WITH_ARGS(WlrLayershell, ExclusionMode::Enum, bExclusionMode, ExclusionMode::Auto, &WlrLayershell::exclusionModeChanged);
 	Q_OBJECT_BINDABLE_PROPERTY(WlrLayershell, qint32, bcExclusiveZone);
 	Q_OBJECT_BINDABLE_PROPERTY(WlrLayershell, Qt::Edge, bcExclusionEdge);

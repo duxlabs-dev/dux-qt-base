@@ -636,6 +636,7 @@ bool WaylandRenderControl::commitFrame(
 	this->presented = true;
 	if (frame.revision == this->commitRevision) this->commitRequested = false;
 	this->damagePresented = true;
+	emit this->committed(true);
 	return true;
 }
 
@@ -685,6 +686,7 @@ void WaylandRenderControl::commitPixel(QtWaylandClient::QWaylandWindow* waylandW
 	this->commitRequested = false;
 	this->presented = true;
 	this->pixelAttached = true;
+	emit this->committed(true);
 }
 
 void WaylandRenderControl::abortFrame() {
@@ -701,6 +703,7 @@ void WaylandRenderControl::commitWithoutFrame() {
 
 	if (auto* window = dynamic_cast<QtWaylandClient::QWaylandWindow*>(this->window()->handle())) {
 		window->commit();
+		emit this->committed(false);
 	}
 }
 
