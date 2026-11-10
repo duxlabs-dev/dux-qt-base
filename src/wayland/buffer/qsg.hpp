@@ -8,6 +8,7 @@
 #include <qsgnode.h>
 #include <qsgtexture.h>
 #include <qvectornd.h>
+#include <rhi/qrhi.h>
 
 #include "manager.hpp"
 
@@ -21,6 +22,8 @@ public:
 
 	[[nodiscard]] virtual QSGTexture* texture() const = 0;
 	virtual void sync(const WlBuffer* /*buffer*/, QQuickWindow* /*window*/) {}
+	// Hands a buffer rendered through target to its readers. Call in a frame, outside of a pass.
+	virtual void release(QRhiCommandBuffer* /*commands*/, QRhiTexture* /*target*/) {}
 
 protected:
 	WlBufferQSGTexture() = default;

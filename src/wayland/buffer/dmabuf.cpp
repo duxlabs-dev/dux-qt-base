@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -35,6 +36,8 @@
 #include <qvulkaninstance.h>
 #include <qwayland-linux-dmabuf-v1.h>
 #include <qwaylandclientextension.h>
+#include <rhi/qrhi.h>
+#include <rhi/qrhi_platform.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <sys/sysmacros.h>
@@ -78,6 +81,10 @@ constexpr std::array<SupportedDrmFormat, 11> SUPPORTED_VK_FORMATS = {{
     {.drmFormat = DRM_FORMAT_RGB565, .vkFormat = VK_FORMAT_R5G6B5_UNORM_PACK16},
     {.drmFormat = DRM_FORMAT_BGR565, .vkFormat = VK_FORMAT_B5G6R5_UNORM_PACK16},
 }};
+
+// A renderTarget buffer's image is drawn into, and copied into under window decorations.
+constexpr VkImageUsageFlags TARGET_USAGE =
+    VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
 
 VkFormat drmFormatToVkFormat(uint32_t drmFormat) {
 	const auto* it = std::ranges::find_if(SUPPORTED_VK_FORMATS, [&](const SupportedDrmFormat& f) {
@@ -444,6 +451,7 @@ bool LinuxDmabufManager::initRenderFormatsGl(QQuickWindow* window) {
 		this->renderFormats.formats.push(qMakePair(format, mods));
 	}
 
+	this->targetFormats = this->renderFormats;
 	return true;
 }
 
@@ -506,6 +514,26 @@ bool LinuxDmabufManager::initRenderFormatsVk(QQuickWindow* window) {
 		qCDebug(logDmabuf) << "Found render node:" << this->renderNode;
 	}
 
+	// WlDmaBufferVulkanQSGTexture::release() needs the foreign queue family.
+	uint32_t extensionCount = 0;
+	instFuncs->vkEnumerateDeviceExtensionProperties(physDevice, nullptr, &extensionCount, nullptr);
+	auto extensions = std::vector<VkExtensionProperties>(extensionCount);
+	instFuncs->vkEnumerateDeviceExtensionProperties(
+	    physDevice,
+	    nullptr,
+	    &extensionCount,
+	    extensions.data()
+	);
+	extensions.resize(extensionCount);
+
+	const auto foreignQueue = std::ranges::any_of(extensions, [](const auto& extension) {
+		return std::string_view(extension.extensionName) == VK_EXT_QUEUE_FAMILY_FOREIGN_EXTENSION_NAME;
+	});
+
+	if (!foreignQueue) {
+		qCDebug(logDmabuf) << "No render target formats: VK_EXT_queue_family_foreign is missing.";
+	}
+
 	qCDebug(logDmabuf) << "Render formats:";
 	for (const auto& format: SUPPORTED_VK_FORMATS) {
 		auto modList = VkDrmFormatModifierPropertiesListEXT {
@@ -532,6 +560,7 @@ bool LinuxDmabufManager::initRenderFormatsVk(QQuickWindow* window) {
 		qCDebug(logDmabuf) << "  Format" << FourCCStr(format.drmFormat);
 
 		LinuxDmabufModifiers mods;
+		LinuxDmabufModifiers targetMods;
 		for (const auto& m: vkMods) {
 			auto modInfo = VkPhysicalDeviceImageDrmFormatModifierInfoEXT {
 			    .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_IMAGE_DRM_FORMAT_MODIFIER_INFO_EXT,
@@ -569,12 +598,21 @@ bool LinuxDmabufManager::initRenderFormatsVk(QQuickWindow* window) {
 				qCDebug(logDmabuf) << "    Explicit Modifier" << FourCCModStr(m.drmFormatModifier)
 				                   << "(unknown error)";
 			}
+
+			if (r != VK_SUCCESS || !foreignQueue) continue;
+			info.usage = TARGET_USAGE;
+			r = instFuncs->vkGetPhysicalDeviceImageFormatProperties2(physDevice, &info, &props);
+			if (r != VK_SUCCESS) continue;
+			qCDebug(logDmabuf) << "    Render Target Modifier" << FourCCModStr(m.drmFormatModifier);
+			targetMods.modifiers.push(m.drmFormatModifier);
 		}
 
 		if (mods.modifiers.isEmpty()) continue;
 
 		// We don't enable implicit modifiers because they seem to be broken in our current impl.
 		this->renderFormats.formats.push(qMakePair(format.drmFormat, mods));
+		if (targetMods.modifiers.isEmpty()) continue;
+		this->targetFormats.formats.push(qMakePair(format.drmFormat, targetMods));
 	}
 
 	return true;
@@ -642,6 +680,8 @@ std::shared_ptr<GbmDevice> LinuxDmabufManager::getGbmDevice(dev_t handle) {
 }
 
 WlBuffer* LinuxDmabufManager::createDmabuf(const WlBufferRequest& request) {
+	const auto& usable = request.dmabuf.renderTarget ? this->targetFormats : this->renderFormats;
+
 	for (auto& tranche: this->tranches) {
 		if (request.dmabuf.device != 0 && tranche.device != request.dmabuf.device) {
 			continue;
@@ -649,7 +689,7 @@ WlBuffer* LinuxDmabufManager::createDmabuf(const WlBufferRequest& request) {
 
 		LinuxDmabufFormatSelection formats;
 		for (const auto& requestFormat: request.dmabuf.formats) {
-			for (const auto& [renderFormat, renderFormatModifiers]: this->renderFormats.formats) {
+			for (const auto& [renderFormat, renderFormatModifiers]: usable.formats) {
 				if (renderFormat != requestFormat.format) continue;
 
 				if (!requestFormat.modifiers.isEmpty()) {
@@ -724,11 +764,16 @@ WlBuffer* LinuxDmabufManager::createDmabuf(const WlBufferRequest& request) {
 		}
 
 		for (const auto& [format, modifiers]: formats.formats) {
-			if (auto* buf =
-			        this->createDmabuf(gbmDevice, format, modifiers, request.width, request.height))
-			{
-				return buf;
-			}
+			auto* buf = this->createDmabuf(
+			    gbmDevice,
+			    format,
+			    modifiers,
+			    request.width,
+			    request.height,
+			    request.dmabuf.renderTarget
+			);
+
+			if (buf) return buf;
 		}
 	}
 
@@ -741,7 +786,8 @@ WlBuffer* LinuxDmabufManager::createDmabuf(
     uint32_t format,
     const LinuxDmabufModifiers& modifiers,
     uint32_t width,
-    uint32_t height
+    uint32_t height,
+    bool renderTarget
 ) {
 	auto buffer = std::unique_ptr<WlDmaBuffer>(new WlDmaBuffer());
 	auto& bo = buffer->bo;
@@ -823,6 +869,7 @@ WlBuffer* LinuxDmabufManager::createDmabuf(
 	buffer->width = width;
 	buffer->height = height;
 	buffer->format = format;
+	buffer->renderTarget = renderTarget;
 
 	qCDebug(logDmabuf) << "Created dmabuf" << buffer.get();
 	return buffer.release();
@@ -864,6 +911,7 @@ WlDmaBuffer::~WlDmaBuffer() {
 
 bool WlDmaBuffer::isCompatible(const WlBufferRequest& request) const {
 	if (request.width != this->width || request.height != this->height) return false;
+	if (request.dmabuf.renderTarget != this->renderTarget) return false;
 
 	auto matchingFormat = std::ranges::find_if(request.dmabuf.formats, [this](const auto& format) {
 		if (format.format != this->format) return false;
@@ -1107,6 +1155,7 @@ WlBufferQSGTexture* WlDmaBuffer::createQsgTextureVulkan(QQuickWindow* window) co
 	imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
 	imageInfo.tiling = useModifier ? VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT : VK_IMAGE_TILING_LINEAR;
 	imageInfo.usage = VK_IMAGE_USAGE_SAMPLED_BIT;
+	if (this->renderTarget) imageInfo.usage = TARGET_USAGE;
 	imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
 	imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
 
@@ -1195,6 +1244,38 @@ WlBufferQSGTexture* WlDmaBuffer::createQsgTextureVulkan(QQuickWindow* window) co
 			qCWarning(logDmabuf) << "vkBindImageMemory failed, result:" << result;
 			goto cleanup_fail; // NOLINT
 		}
+	}
+
+	if (this->renderTarget) {
+		// Nothing samples a render target: its first frame draws over the whole image,
+		// and the texture only names the image for the QRhiTexture rendered through.
+		auto* qsgTexture = QQuickWindowPrivate::get(window)->createTextureFromNativeTexture(
+		    reinterpret_cast<quint64>(image),
+		    VK_IMAGE_LAYOUT_UNDEFINED,
+		    static_cast<uint>(vkFormat),
+		    QSize(static_cast<int>(this->width), static_cast<int>(this->height)),
+		    {}
+		);
+
+		if (!qsgTexture) {
+			qCWarning(logDmabuf) << "Failed to create Vulkan QSG texture for a render target.";
+			goto cleanup_fail; // NOLINT
+		}
+
+		const auto* native = window->rhi()->nativeHandles();
+		// NOLINTNEXTLINE(cppcoreguidelines-pro-type-static-cast-downcast)
+		const auto* handles = static_cast<const QRhiVulkanNativeHandles*>(native);
+		auto* tex = new WlDmaBufferVulkanQSGTexture(
+		    devFuncs,
+		    device,
+		    image,
+		    memory,
+		    handles->gfxQueueFamilyIdx,
+		    qsgTexture
+		);
+
+		qCDebug(logDmabuf) << "Created WlDmaBufferVulkanQSGTexture" << tex << "from" << this;
+		return tex;
 	}
 
 	{
@@ -1293,7 +1374,7 @@ WlBufferQSGTexture* WlDmaBuffer::createQsgTextureVulkan(QQuickWindow* window) co
 			}
 		}
 
-		auto* tex = new WlDmaBufferVulkanQSGTexture(devFuncs, device, image, memory, qsgTexture);
+		auto* tex = new WlDmaBufferVulkanQSGTexture(devFuncs, device, image, memory, 0, qsgTexture);
 		qCDebug(logDmabuf) << "Created WlDmaBufferVulkanQSGTexture" << tex << "from" << this;
 		return tex;
 	}
@@ -1306,6 +1387,45 @@ cleanup_fail:
 		devFuncs->vkFreeMemory(device, memory, nullptr);
 	}
 	return nullptr;
+}
+
+// The image's contents are only defined for the compositor once its ownership moves to the
+// foreign queue family.
+void WlDmaBufferVulkanQSGTexture::release(QRhiCommandBuffer* commands, QRhiTexture* target) {
+	commands->beginExternal();
+	const auto* native = commands->nativeHandles();
+	// NOLINTNEXTLINE(cppcoreguidelines-pro-type-static-cast-downcast)
+	const auto* handles = static_cast<const QRhiVulkanCommandBufferNativeHandles*>(native);
+
+	VkImageMemoryBarrier barrier = {};
+	barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+	barrier.oldLayout = static_cast<VkImageLayout>(target->nativeTexture().layout);
+	barrier.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+	barrier.srcQueueFamilyIndex = this->queueFamily;
+	barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_FOREIGN_EXT;
+	barrier.image = this->image;
+	barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+	barrier.subresourceRange.levelCount = 1;
+	barrier.subresourceRange.layerCount = 1;
+	barrier.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT;
+	barrier.dstAccessMask = 0;
+
+	this->devFuncs->vkCmdPipelineBarrier(
+	    handles->commandBuffer,
+	    VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT,
+	    VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+	    0,
+	    0,
+	    nullptr,
+	    0,
+	    nullptr,
+	    1,
+	    &barrier
+	);
+
+	commands->endExternal();
+	// The next frame draws over the image without acquiring it back, so its contents are undefined.
+	target->setNativeLayout(VK_IMAGE_LAYOUT_UNDEFINED);
 }
 
 WlDmaBufferVulkanQSGTexture::~WlDmaBufferVulkanQSGTexture() {

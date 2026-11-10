@@ -71,11 +71,17 @@ it when the fork diverges further.
   bounded buffer allocation during resize, a new scene after device loss, and
   optional compositor presentation timing.
 - `src/window/rendercontrol.*`: the render control and its animation driver
-  are only enabled where the platform can create one.
+  are only enabled where the platform can create one, on OpenGL or Vulkan.
 - `src/services/notifications/`: activation tokens for actions, sent even if
   the requesting window is destroyed first; image rows padded to the rowstride.
-- `src/window/damage.*`: scene graph callbacks run on the render thread;
-  GUI invalidation uses an atomic flag.
+- `src/window/damage.*`, `curvestroke.*`: scene graph callbacks run on the
+  render thread; GUI invalidation uses an atomic flag; curve renderer shapes
+  and text are bounded instead of damaging the whole window.
+- `src/wayland/buffer/*`, `src/wayland/renderthread.*`: render control on
+  Vulkan. Buffers requested as render targets are restricted to modifiers the
+  device can draw into, imported as color attachments, and released to the
+  foreign queue family after each frame. `src/window/proxywindow.cpp` and
+  `src/wayland/session_lock.cpp` request `VK_EXT_queue_family_foreign`.
 
 ## syncing
 

@@ -17,6 +17,7 @@
 #include <qvulkanfunctions.h>
 #include <qwayland-linux-dmabuf-v1.h>
 #include <qwaylandclientextension.h>
+#include <rhi/qrhi.h>
 #include <sys/types.h>
 #include <vulkan/vulkan_core.h>
 #include <wayland-linux-dmabuf-v1-client-protocol.h>
@@ -112,6 +113,7 @@ public:
 	Q_DISABLE_COPY_MOVE(WlDmaBufferVulkanQSGTexture);
 
 	[[nodiscard]] QSGTexture* texture() const override { return this->qsgTexture; }
+	void release(QRhiCommandBuffer* commands, QRhiTexture* target) override;
 
 private:
 	WlDmaBufferVulkanQSGTexture(
@@ -119,18 +121,21 @@ private:
 	    VkDevice device,
 	    VkImage image,
 	    VkDeviceMemory memory,
+	    uint32_t queueFamily,
 	    QSGTexture* qsgTexture
 	)
 	    : devFuncs(devFuncs)
 	    , device(device)
 	    , image(image)
 	    , memory(memory)
+	    , queueFamily(queueFamily)
 	    , qsgTexture(qsgTexture) {}
 
 	QVulkanDeviceFunctions* devFuncs = nullptr;
 	VkDevice device = VK_NULL_HANDLE;
 	VkImage image = VK_NULL_HANDLE;
 	VkDeviceMemory memory = VK_NULL_HANDLE;
+	uint32_t queueFamily = 0;
 	QSGTexture* qsgTexture = nullptr;
 
 	friend class WlDmaBuffer;
@@ -171,6 +176,7 @@ private:
 	uint32_t width = 0;
 	uint32_t height = 0;
 	bool usedImplicitModifier = false;
+	bool renderTarget = false;
 
 	friend class LinuxDmabufManager;
 	friend QDebug& operator<<(QDebug& debug, const WlDmaBuffer* buffer);
@@ -233,7 +239,8 @@ public:
 	    uint32_t format,
 	    const LinuxDmabufModifiers& modifiers,
 	    uint32_t width,
-	    uint32_t height
+	    uint32_t height,
+	    bool renderTarget
 	);
 
 	bool initRenderFormats(QQuickWindow* window);
@@ -247,6 +254,8 @@ private:
 	std::shared_ptr<GbmDevice> getGbmDevice(dev_t handle);
 
 	LinuxDmabufFormatSelection renderFormats;
+	// Subset of renderFormats for WlBufferRequest::dmabuf::renderTarget.
+	LinuxDmabufFormatSelection targetFormats;
 	std::string renderNode;
 	QList<LinuxDmabufTranche> tranches;
 	QList<std::weak_ptr<GbmDevice>> gbmDevices;

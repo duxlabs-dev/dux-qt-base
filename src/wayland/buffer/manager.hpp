@@ -70,6 +70,8 @@ struct WlBufferRequest {
 	struct {
 		dev_t device = 0;
 		StackList<DmaFormat, 1> formats;
+		// The renderer draws into the buffer instead of sampling it.
+		bool renderTarget = false;
 	} dmabuf;
 
 	void reset();

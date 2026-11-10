@@ -150,7 +150,7 @@ private:
 	bool commitFrame(const Frame& frame, QtWaylandClient::QWaylandWindow* waylandWindow);
 	void abortFrame();
 	void commitWithoutFrame();
-	QRhiRenderTarget* decorationTarget(QSize size);
+	QRhiRenderTarget* decorationTarget(QSize size, QRhiTexture::Format format);
 	bool drawDecoration(const QImage& image, SurfaceBuffer* buffer, QPoint offset);
 
 	std::unique_ptr<PresentationTracker> presentation;

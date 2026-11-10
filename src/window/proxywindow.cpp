@@ -166,6 +166,7 @@ void ProxyWindowBase::ensureQWindow() {
 	    "VK_KHR_external_memory_fd",
 	    "VK_EXT_external_memory_dma_buf",
 	    "VK_EXT_image_drm_format_modifier",
+	    "VK_EXT_queue_family_foreign",
 	});
 	this->window->setGraphicsConfiguration(graphicsConfig);
 }

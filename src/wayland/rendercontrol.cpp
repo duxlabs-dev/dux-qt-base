@@ -153,6 +153,7 @@ SurfaceBuffer* SurfaceBufferPool::create(QSize size, bool alpha) {
 	buffer::WlBufferRequest request;
 	request.width = size.width();
 	request.height = size.height();
+	request.dmabuf.renderTarget = true;
 	request.dmabuf.formats.push(
 	    buffer::WlBufferRequest::DmaFormat(alpha ? DRM_FORMAT_ARGB8888 : DRM_FORMAT_XRGB8888)
 	);
@@ -175,8 +176,10 @@ bool SurfaceBufferPool::prepare(QQuickWindow* window, QRhi* rhi, SurfaceBuffer* 
 	buffer->import.reset(buffer->buffer->createQsgTexture(window));
 	if (!buffer->import) return false;
 
-	const auto native = buffer->import->texture()->rhiTexture()->nativeTexture();
-	buffer->texture.reset(rhi->newTexture(QRhiTexture::RGBA8, size, 1, QRhiTexture::RenderTarget));
+	// The image's own format: QRhiVulkan creates the view with it.
+	auto* imported = buffer->import->texture()->rhiTexture();
+	const auto native = imported->nativeTexture();
+	buffer->texture.reset(rhi->newTexture(imported->format(), size, 1, QRhiTexture::RenderTarget));
 	if (!buffer->texture->createFrom({.object = native.object, .layout = 0})) return false;
 
 	if (!this->depthStencil || this->depthStencil->pixelSize() != size) {
@@ -286,8 +289,14 @@ void WaylandRenderControl::trimBuffers() {
 	}
 	if (!this->pool.trim()) return;
 
-	// QRhiGles2 frees released GL objects in beginOffscreenFrame(), see executeDeferredReleases().
+	// QRhiGles2 frees released GL objects in beginOffscreenFrame(), QRhiVulkan only those of
+	// one frame slot there and the rest in finish(); see executeDeferredReleases().
 	this->renderThread->invoke([this] {
+		if (this->rhi->backend() == QRhi::Vulkan) {
+			this->rhi->finish();
+			return;
+		}
+
 		QRhiCommandBuffer* commands = nullptr;
 		if (this->rhi->beginOffscreenFrame(&commands) != QRhi::FrameOpSuccess) return;
 		this->rhi->endOffscreenFrame();
@@ -343,7 +352,7 @@ bool WaylandRenderControl::initializeScene() {
 	}
 
 	auto* manager = buffer::WlBufferManager::instance();
-	this->renderThread = std::make_unique<RenderThread>(window->requestedFormat());
+	this->renderThread = std::make_unique<RenderThread>(window);
 	this->rhi = this->renderThread->rhi();
 	auto initialized = false;
 	if (this->rhi) {
@@ -525,6 +534,9 @@ void WaylandRenderControl::drawFrame(Frame& frame) {
 	timer.start();
 	const auto finish = qScopeGuard([this, &frame, &timer] {
 		this->endFrame();
+		// As of Qt 6.12 QRhiVulkan::endOffscreenFrame() no longer waits for the GPU, and the
+		// buffer is committed without explicit sync.
+		if (frame.rendered && this->rhi->backend() == QRhi::Vulkan) this->rhi->finish();
 		// Collect changes made during render; WindowDamageTracker::sync() forces full damage with margins.
 		frame.damage = this->tracker ? this->tracker->damage() : std::nullopt;
 		frame.pendingDamage = this->tracker && this->tracker->pendingDamageAfterPresent();
@@ -539,8 +551,9 @@ void WaylandRenderControl::drawFrame(Frame& frame) {
 		frame.failed = true;
 		return;
 	}
-	auto* target = frame.decoration.isNull() ? frame.buffer->renderTarget.get()
-	                                         : this->decorationTarget(frame.contentSize);
+	auto* target = frame.decoration.isNull()
+	                 ? frame.buffer->renderTarget.get()
+	                 : this->decorationTarget(frame.contentSize, frame.buffer->texture->format());
 	if (!target) {
 		frame.failed = true;
 		return;
@@ -554,6 +567,8 @@ void WaylandRenderControl::drawFrame(Frame& frame) {
 	if (!frame.decoration.isNull()) {
 		frame.failed = !this->drawDecoration(frame.decoration, frame.buffer, frame.decorationOffset);
 	}
+	if (frame.failed) return;
+	frame.buffer->import->release(this->commandBuffer(), frame.buffer->texture.get());
 }
 
 void WaylandRenderControl::finishFrame(const std::shared_ptr<Frame>& frame) {
@@ -689,29 +704,25 @@ void WaylandRenderControl::commitWithoutFrame() {
 	}
 }
 
-QRhiRenderTarget* WaylandRenderControl::decorationTarget(QSize size) {
+// drawDecoration() copies texels as they are stored, so its textures share the buffer's format.
+QRhiRenderTarget* WaylandRenderControl::decorationTarget(QSize size, QRhiTexture::Format format) {
 	if (this->decoration && this->decoration->size == size) {
 		return this->decoration->renderTarget.get();
 	}
 
 	auto target = std::make_unique<DecorationTarget>();
 	target->size = size;
-	target->content.reset(
-	    this->rhi->newTexture(QRhiTexture::RGBA8, size, 1, QRhiTexture::RenderTarget)
-	);
+	target->content.reset(this->rhi->newTexture(format, size, 1, QRhiTexture::RenderTarget));
 	target->depthStencil.reset(this->rhi->newRenderBuffer(QRhiRenderBuffer::DepthStencil, size));
+	// QRhiVulkan builds the render pass from the formats of created attachments.
+	if (!target->content->create() || !target->depthStencil->create()) return nullptr;
 
 	auto description = QRhiTextureRenderTargetDescription(QRhiColorAttachment(target->content.get()));
 	description.setDepthStencilBuffer(target->depthStencil.get());
 	target->renderTarget.reset(this->rhi->newTextureRenderTarget(description));
 	target->renderPass.reset(target->renderTarget->newCompatibleRenderPassDescriptor());
 	target->renderTarget->setRenderPassDescriptor(target->renderPass.get());
-
-	if (!target->content->create() || !target->depthStencil->create()
-	    || !target->renderTarget->create())
-	{
-		return nullptr;
-	}
+	if (!target->renderTarget->create()) return nullptr;
 
 	this->decoration = std::move(target);
 	return this->decoration->renderTarget.get();
@@ -725,8 +736,9 @@ bool WaylandRenderControl::drawDecoration(
 ) {
 	auto* target = this->decoration.get();
 
+	const auto format = buffer->texture->format();
 	if (!target->decoration || target->decoration->pixelSize() != image.size()) {
-		target->decoration.reset(this->rhi->newTexture(QRhiTexture::RGBA8, image.size()));
+		target->decoration.reset(this->rhi->newTexture(format, image.size()));
 		target->decorationKey = 0;
 		if (!target->decoration->create()) {
 			target->decoration.reset();
@@ -737,7 +749,9 @@ bool WaylandRenderControl::drawDecoration(
 	auto* updates = this->rhi->nextResourceUpdateBatch();
 	if (image.cacheKey() != target->decorationKey) {
 		target->decorationKey = image.cacheKey();
-		auto converted = image.convertToFormat(QImage::Format_RGBA8888_Premultiplied);
+		auto imageFormat = QImage::Format_RGBA8888_Premultiplied;
+		if (format == QRhiTexture::BGRA8) imageFormat = QImage::Format_ARGB32_Premultiplied;
+		const auto converted = image.convertToFormat(imageFormat);
 		updates->uploadTexture(target->decoration.get(), converted);
 	}
 

@@ -9,6 +9,7 @@
 #include <typeinfo>
 #include <utility>
 
+#include <numbers>
 #include <private/qquickwindow_p.h>
 #include <private/qsgabstractrenderer_p.h>
 #include <private/qsgadaptationlayer_p.h>
@@ -51,6 +52,7 @@
 #include <span>
 
 #include "../core/logcat.hpp"
+#include "curvestroke.hpp"
 #include "proxywindow.hpp"
 
 namespace qs::window {
@@ -60,7 +62,7 @@ namespace {
 QS_LOGGING_CATEGORY(logDamage, "quickshell.window.damage", QtWarningMsg);
 constexpr qsizetype MAX_DAMAGE_RECTS = 32;
 
-// Glyph shader allowlist for boundedGlyphShader(); windowRect() adds the pixel margin.
+// Glyph shader allowlist for listedShader(); windowRect() adds the pixel margin.
 constexpr auto GLYPH_SHADERS = std::array {
     ":/qt-project.org/scenegraph/shaders_ng/textmask.vert.qsb",
     ":/qt-project.org/scenegraph/shaders_ng/styledtext.vert.qsb",
@@ -70,6 +72,33 @@ constexpr auto GLYPH_SHADERS = std::array {
     ":/qt-project.org/scenegraph/shaders_ng/distancefieldshiftedtext.vert.qsb",
     ":/qt-project.org/scenegraph/shaders_ng/hiqsubpixeldistancefieldtext.vert.qsb",
     ":/qt-project.org/scenegraph/shaders_ng/loqsubpixeldistancefieldtext.vert.qsb",
+};
+
+// Curve shader allowlist for listedShader(); curveNormal() bounds how far they move a vertex.
+constexpr auto CURVE_SHADERS = std::array {
+    ":/qt-project.org/scenegraph/shaders_ng/shapecurve.vert.qsb",
+    ":/qt-project.org/scenegraph/shaders_ng/shapecurve_derivatives.vert.qsb",
+    ":/qt-project.org/scenegraph/shaders_ng/shapecurve_lg.vert.qsb",
+    ":/qt-project.org/scenegraph/shaders_ng/shapecurve_lg_derivatives.vert.qsb",
+    ":/qt-project.org/scenegraph/shaders_ng/shapecurve_rg.vert.qsb",
+    ":/qt-project.org/scenegraph/shaders_ng/shapecurve_rg_derivatives.vert.qsb",
+    ":/qt-project.org/scenegraph/shaders_ng/shapecurve_cg.vert.qsb",
+    ":/qt-project.org/scenegraph/shaders_ng/shapecurve_cg_derivatives.vert.qsb",
+    ":/qt-project.org/scenegraph/shaders_ng/shapecurve_tf.vert.qsb",
+    ":/qt-project.org/scenegraph/shaders_ng/shapecurve_tf_derivatives.vert.qsb",
+    ":/qt-project.org/scenegraph/shaders_ng/shapestroke.vert.qsb",
+    ":/qt-project.org/scenegraph/shaders_ng/shapestroke_derivatives.vert.qsb",
+    ":/qt-project.org/scenegraph/shaders_ng/shapestroke_lg.vert.qsb",
+    ":/qt-project.org/scenegraph/shaders_ng/shapestroke_rg.vert.qsb",
+    ":/qt-project.org/scenegraph/shaders_ng/shapestroke_cg.vert.qsb",
+};
+
+// Curve stroke shaders that also widen the stroke along the normal; see measureGeometry().
+constexpr auto EXPANDING_SHADERS = std::array {
+    ":/qt-project.org/scenegraph/shaders_ng/shapestroke_expanding.vert.qsb",
+    ":/qt-project.org/scenegraph/shaders_ng/shapestroke_lg_expanding.vert.qsb",
+    ":/qt-project.org/scenegraph/shaders_ng/shapestroke_rg_expanding.vert.qsb",
+    ":/qt-project.org/scenegraph/shaders_ng/shapestroke_cg_expanding.vert.qsb",
 };
 
 // Effect shader allowlist for boundedEffectShader().
@@ -83,6 +112,24 @@ constexpr auto EFFECT_SHADERS = std::array {
 bool isFinite(const QRectF& rect) {
 	return std::isfinite(rect.left()) && std::isfinite(rect.top()) && std::isfinite(rect.right())
 	    && std::isfinite(rect.bottom());
+}
+
+// The curve shaders move each vertex sqrt(2) pixels along its normal and size the pixel from the
+// determinant; see shapecurve.vert. Returns the normal as long as the matrix can make that step,
+// infinite if the determinant does not bound it.
+float curveNormal(float normal, const QMatrix4x4& matrix) {
+	if (normal == 0) return 0;
+
+	const auto planar = matrix.isAffine() && matrix(0, 2) == 0 && matrix(1, 2) == 0
+	                 && matrix(2, 0) == 0 && matrix(2, 1) == 0 && matrix(2, 2) == 1;
+	// Singular values: the scale along the axes the matrix stretches most and least.
+	const auto sum = std::hypot(matrix(0, 0) + matrix(1, 1), matrix(0, 1) - matrix(1, 0));
+	const auto difference = std::hypot(matrix(0, 0) - matrix(1, 1), matrix(0, 1) + matrix(1, 0));
+	const auto most = (sum + difference) / 2;
+	const auto least = std::abs(sum - difference) / 2;
+	if (!planar || least == 0) return std::numeric_limits<float>::infinity();
+
+	return normal * std::sqrt(most / least);
 }
 
 QRegion uniteRects(const QList<QRect>& rects) {
@@ -131,24 +178,42 @@ private:
 		QRectF rect;
 		bool unbounded = false;
 		bool antialiased = false;
+		// Longest normal of the curve geometry; see curveNormal().
+		float normal = 0;
 
 		Subtree& operator|=(const Subtree& other) {
 			if (!other.rect.isEmpty()) this->rect |= other.rect;
 			this->unbounded |= other.unbounded;
 			this->antialiased |= other.antialiased;
+			this->normal = std::max(this->normal, other.normal);
 			return *this;
+		}
+
+		void transform(const QMatrix4x4& matrix) {
+			this->rect = matrix.mapRect(this->rect);
+			this->normal = curveNormal(this->normal, matrix);
+			this->unbounded |= !isFinite(this->rect) || !std::isfinite(this->normal);
 		}
 	};
 
-	static constexpr Subtree UNBOUNDED {.rect = {}, .unbounded = true, .antialiased = false};
+	static constexpr Subtree UNBOUNDED {
+	    .rect = {},
+	    .unbounded = true,
+	    .antialiased = false,
+	    .normal = 0,
+	};
 
 	struct GlyphAtlas {
 		const QSGDistanceFieldTextMaterial* material = nullptr;
 		QSize size;
 	};
 
-	bool boundedShader(QSGGeometryNode* node, bool glyph, QSGMaterial* material);
-	bool boundedGlyphShader(QSGMaterial* material);
+	// What a shader draws: its vertices, or vertices it moves along their normals by a pixel
+	// (Normals) and the stroke width (Expanding).
+	enum class Bounds : quint8 { Unknown, Vertices, Normals, Expanding };
+
+	Bounds shaderBounds(QSGGeometryNode* node, bool glyph, QSGMaterial* material);
+	Bounds listedShader(QSGMaterial* material);
 	bool boundedEffectShader(QSGMaterial* material);
 	void forget(QSGNode* node);
 	void forgetChildren(QSGNode* node);
@@ -160,7 +225,7 @@ private:
 	void recordGlyphAtlas(QSGGeometryNode* node);
 
 	std::array<QShader, EFFECT_SHADERS.size()> effectShaders {};
-	QHash<QSGMaterialType*, bool> glyphShaders;
+	QHash<QSGMaterialType*, Bounds> listedShaders;
 	QHash<QSGNode*, Subtree> subtrees;
 	QHash<QSGNode*, Subtree> localBounds;
 	QSet<QSGNode*> dirty;
@@ -170,6 +235,8 @@ private:
 	QSet<QSGNode*> stale;
 	QSet<QSGNode*> renderNodes;
 	QSet<QSGNode*> staleTextures;
+	// Their bounds depend on the scale; see measureGeometry().
+	QSet<QSGNode*> cosmeticStrokes;
 	QMap<QSGNode*, GlyphAtlas> glyphAtlases;
 	QList<QRect> pending;
 	QRegion frameDamage;
@@ -184,39 +251,53 @@ private:
 	bool loggedEffectShader = false;
 };
 
-bool SceneDamageTracker::boundedShader(QSGGeometryNode* node, bool glyph, QSGMaterial* material) {
-	if (!material) return false;
+SceneDamageTracker::Bounds
+SceneDamageTracker::shaderBounds(QSGGeometryNode* node, bool glyph, QSGMaterial* material) {
+	if (!material) return Bounds::Unknown;
 
 	const auto& type = typeid(*material);
 	if (type == typeid(QSGFlatColorMaterial) || type == typeid(QSGVertexColorMaterial)
 	    || type == typeid(QSGOpaqueTextureMaterial) || type == typeid(QSGTextureMaterial)
 	    || type == typeid(QSGSmoothColorMaterial) || type == typeid(QSGSmoothTextureMaterial))
 	{
-		return true;
+		return Bounds::Vertices;
 	}
 
-	if (glyph) return this->boundedGlyphShader(material);
-	if (!dynamic_cast<QSGShaderEffectNode*>(node)) return false;
+	if (glyph) {
+		return this->listedShader(material) == Bounds::Vertices ? Bounds::Vertices : Bounds::Unknown;
+	}
+
+	if (!dynamic_cast<QSGShaderEffectNode*>(node)) {
+		const auto bounds = this->listedShader(material);
+		return bounds == Bounds::Vertices ? Bounds::Unknown : bounds;
+	}
+
 	// RequiresFullMatrix marks custom vertex shaders; see QSGRhiShaderEffectNode::syncMaterial().
-	if (!material->flags().testFlag(QSGMaterial::RequiresFullMatrix)) return true;
-	return this->boundedEffectShader(material);
+	if (!material->flags().testFlag(QSGMaterial::RequiresFullMatrix)) return Bounds::Vertices;
+	return this->boundedEffectShader(material) ? Bounds::Vertices : Bounds::Unknown;
 }
 
-bool SceneDamageTracker::boundedGlyphShader(QSGMaterial* material) {
-	auto cached = this->glyphShaders.constFind(material->type());
-	if (cached != this->glyphShaders.cend()) return *cached;
+SceneDamageTracker::Bounds SceneDamageTracker::listedShader(QSGMaterial* material) {
+	const auto cached = this->listedShaders.constFind(material->type());
+	if (cached != this->listedShaders.cend()) return *cached;
 
 	auto shader = std::unique_ptr<QSGMaterialShader>(
 	    material->createShader(QSGRendererInterface::RenderMode2D)
 	);
 	auto file =
 	    QSGMaterialShaderPrivate::get(shader.get())->shaderFileNames.value(QShader::VertexStage);
-	auto bounded =
-	    std::ranges::any_of(GLYPH_SHADERS, [&file](const char* path) { return file == path; });
-	if (!bounded) qCDebug(logDamage) << "Unrecognized glyph vertex shader:" << file;
+	const auto listed = [&file](std::span<const char* const> shaders) {
+		return std::ranges::any_of(shaders, [&file](const char* path) { return file == path; });
+	};
 
-	this->glyphShaders.insert(material->type(), bounded);
-	return bounded;
+	auto bounds = Bounds::Unknown;
+	if (listed(GLYPH_SHADERS)) bounds = Bounds::Vertices;
+	else if (listed(CURVE_SHADERS)) bounds = Bounds::Normals;
+	else if (listed(EXPANDING_SHADERS)) bounds = Bounds::Expanding;
+	else qCDebug(logDamage) << "Unrecognized vertex shader:" << file;
+
+	this->listedShaders.insert(material->type(), bounds);
+	return bounds;
 }
 
 bool SceneDamageTracker::boundedEffectShader(QSGMaterial* material) {
@@ -249,8 +330,13 @@ void SceneDamageTracker::setFrame(const QSize& size, qreal scale, const QColor& 
 	this->full |= full || this->size != size || this->scale != scale || this->color != color;
 	this->rendering = false;
 	this->size = size;
-	this->scale = scale;
 	this->color = color;
+	if (this->scale == scale) return;
+
+	this->scale = scale;
+	for (auto* node: std::as_const(this->cosmeticStrokes)) {
+		this->nodeChanged(node, QSGNode::DirtyGeometry);
+	}
 }
 
 void SceneDamageTracker::nodeChanged(QSGNode* node, QSGNode::DirtyState state) {
@@ -284,6 +370,7 @@ void SceneDamageTracker::forget(QSGNode* node) {
 	this->localBounds.remove(node);
 	this->renderNodes.remove(node);
 	this->staleTextures.remove(node);
+	this->cosmeticStrokes.remove(node);
 	this->glyphAtlases.remove(node);
 	this->forgetChildren(node);
 }
@@ -315,12 +402,16 @@ QRectF SceneDamageTracker::windowRect(QSGNode* node) const {
 
 	if (!matrix.isAffine()) return window;
 	auto rect = matrix.mapRect(subtree.rect);
-	if (!isFinite(rect)) return window;
-	if (!subtree.antialiased) return rect;
+	const auto normal = curveNormal(subtree.normal, matrix);
+	if (!isFinite(rect) || !std::isfinite(normal)) return window;
 
 	// Include a pixel margin for the antialiased materials selected in measureGeometry().
-	auto pixel = 1 / this->scale;
-	return rect.adjusted(-pixel, -pixel, pixel, pixel);
+	const auto margin =
+	    std::max(subtree.antialiased ? 1.0f : 0.0f, std::numbers::sqrt2_v<float> * normal);
+	if (margin == 0) return rect;
+
+	const auto pixels = margin / this->scale;
+	return rect.adjusted(-pixels, -pixels, pixels, pixels);
 }
 
 SceneDamageTracker::Subtree SceneDamageTracker::refresh(QSGNode* node) {
@@ -361,8 +452,7 @@ SceneDamageTracker::Subtree SceneDamageTracker::refresh(QSGNode* node) {
 		auto entry = cached == this->subtrees.cend() || this->stale.contains(child)
 		               ? this->refresh(child)
 		               : *cached;
-		entry.rect = matrix.mapRect(entry.rect);
-		entry.unbounded |= !isFinite(entry.rect);
+		entry.transform(matrix);
 		subtree |= entry;
 	}
 
@@ -379,8 +469,8 @@ void SceneDamageTracker::propagate(QSGNode* node, Subtree subtree) {
 		if (parent->type() == QSGNode::TransformNodeType) {
 			// NOLINTNEXTLINE(cppcoreguidelines-pro-type-static-cast-downcast)
 			const auto& matrix = static_cast<QSGTransformNode*>(parent)->matrix();
-			subtree.rect = matrix.mapRect(subtree.rect);
-			subtree.unbounded |= !matrix.isAffine() || !isFinite(subtree.rect);
+			subtree.transform(matrix);
+			subtree.unbounded |= !matrix.isAffine();
 		}
 
 		*cached |= subtree;
@@ -389,10 +479,16 @@ void SceneDamageTracker::propagate(QSGNode* node, Subtree subtree) {
 
 SceneDamageTracker::Subtree SceneDamageTracker::measureGeometry(QSGGeometryNode* node) {
 	auto glyph = dynamic_cast<QSGGlyphNode*>(node) != nullptr;
-	if (!this->boundedShader(node, glyph, node->material())) return UNBOUNDED;
-	if (node->opaqueMaterial() && !this->boundedShader(node, glyph, node->opaqueMaterial())) {
+	const auto bounds = this->shaderBounds(node, glyph, node->material());
+	if (bounds == Bounds::Unknown) return UNBOUNDED;
+	if (node->opaqueMaterial() && this->shaderBounds(node, glyph, node->opaqueMaterial()) != bounds) {
 		return UNBOUNDED;
 	}
+
+	const auto curve = bounds != Bounds::Vertices;
+	const auto stroke = curve ? curveStroke(node) : std::nullopt;
+	if (bounds == Bounds::Expanding && !stroke) return UNBOUNDED;
+	if (curve) this->cosmeticStrokes.remove(node);
 
 	auto* geometry = node->geometry();
 	// Don't skip frames with unfinished glyph geometry; see QSGDefaultGlyphNode::preprocess().
@@ -417,6 +513,15 @@ SceneDamageTracker::Subtree SceneDamageTracker::measureGeometry(QSGGeometryNode*
 		return UNBOUNDED;
 	}
 
+	// The curve nodes end each vertex with its normal; see QSGCurveFillNode::attributes().
+	const auto attributes =
+	    std::span(geometry->attributes(), static_cast<size_t>(geometry->attributeCount()));
+	const auto& last = attributes.back();
+	if (curve && (attributes.size() < 2 || last.type != QSGGeometry::FloatType || last.tupleSize < 2))
+	{
+		return UNBOUNDED;
+	}
+
 	auto left = std::numeric_limits<float>::max();
 	auto top = left;
 	auto right = std::numeric_limits<float>::lowest();
@@ -426,6 +531,8 @@ SceneDamageTracker::Subtree SceneDamageTracker::measureGeometry(QSGGeometryNode*
 	    static_cast<const char*>(geometry->vertexData()),
 	    stride * static_cast<size_t>(geometry->vertexCount())
 	);
+	const auto normalOffset = stride - static_cast<size_t>(last.tupleSize) * sizeof(float);
+	auto normal = 0.0f;
 
 	for (auto i = 0; i < geometry->vertexCount(); i++) {
 		QSGGeometry::Point2D point = {};
@@ -435,6 +542,13 @@ SceneDamageTracker::Subtree SceneDamageTracker::measureGeometry(QSGGeometryNode*
 		top = std::min(top, point.y);
 		right = std::max(right, point.x);
 		bottom = std::max(bottom, point.y);
+
+		if (curve) {
+			std::memcpy(&point, vertices.subspan(normalOffset).data(), sizeof(point));
+			if (!std::isfinite(point.x) || !std::isfinite(point.y)) return UNBOUNDED;
+			normal = std::max(normal, std::hypot(point.x, point.y));
+		}
+
 		vertices = vertices.subspan(stride);
 	}
 
@@ -444,7 +558,28 @@ SceneDamageTracker::Subtree SceneDamageTracker::measureGeometry(QSGGeometryNode*
 	    glyph || type == typeid(QSGSmoothColorMaterial) || type == typeid(QSGSmoothTextureMaterial);
 
 	auto rect = QRectF(QPointF(left, top), QPointF(right, bottom));
-	return {.rect = rect, .unbounded = false, .antialiased = antialiased};
+	if (curve) {
+		const auto [scale, width] = stroke.value_or(CurveStroke {});
+
+		// shapestroke.vert moves an expanding stroke's vertices by its width along the normal. A
+		// cosmetic stroke takes back up to half of max(1, width), or adds as much in logical
+		// pixels when scaled down.
+		const auto cosmetic = bounds == Bounds::Expanding && width < 0;
+		if (bounds == Bounds::Expanding) {
+			const auto reach = normal * std::max(std::abs(width), cosmetic ? 0.5f : 0.0f);
+			rect.adjust(-reach, -reach, reach, reach);
+		}
+
+		if (cosmetic) {
+			const auto pixels = std::max(1.0f, std::abs(width)) / 2 * static_cast<float>(this->scale);
+			normal += normal * pixels / std::numbers::sqrt2_v<float>;
+			this->cosmeticStrokes.insert(node);
+		}
+
+		rect = QRectF(rect.topLeft() * scale, rect.bottomRight() * scale).normalized();
+	}
+
+	return {.rect = rect, .unbounded = false, .antialiased = antialiased, .normal = normal};
 }
 
 void SceneDamageTracker::recordGlyphAtlas(QSGGeometryNode* node) {

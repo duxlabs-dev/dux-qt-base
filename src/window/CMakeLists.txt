@@ -5,7 +5,14 @@ qt_add_library(quickshell-window STATIC
 	floatingwindow.cpp
 	popupwindow.cpp
 	damage.cpp
+	curvestroke.cpp
 	rendercontrol.cpp
+)
+
+# qsgcurvestrokenode_p_p.h needs QT_USE_QSTRINGBUILDER since Qt 6.11, which the shared pch lacks.
+set_source_files_properties(curvestroke.cpp PROPERTIES
+	SKIP_PRECOMPILE_HEADERS ON
+	COMPILE_DEFINITIONS QT_USE_QSTRINGBUILDER
 )
 
 qt_add_qml_module(quickshell-window

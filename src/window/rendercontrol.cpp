@@ -23,8 +23,9 @@ bool supported() {
 		return false;
 	}
 
-	if (QQuickWindow::graphicsApi() != QSGRendererInterface::OpenGL) {
-		qCInfo(logRenderControl) << "Render control requires OpenGL.";
+	const auto api = QQuickWindow::graphicsApi();
+	if (api != QSGRendererInterface::OpenGL && api != QSGRendererInterface::Vulkan) {
+		qCInfo(logRenderControl) << "Render control requires OpenGL or Vulkan.";
 		return false;
 	}
 

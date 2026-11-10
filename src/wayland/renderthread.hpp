@@ -7,7 +7,7 @@
 #include <qabstractanimation.h>
 #include <qobject.h>
 #include <qoffscreensurface.h>
-#include <qsurfaceformat.h>
+#include <qquickwindow.h>
 #include <qtclasshelpermacros.h>
 #include <qthread.h>
 #include <rhi/qrhi.h>
@@ -16,7 +16,7 @@ namespace qs::wayland::render {
 
 class RenderThread {
 public:
-	explicit RenderThread(const QSurfaceFormat& format);
+	explicit RenderThread(QQuickWindow* window);
 	~RenderThread();
 	Q_DISABLE_COPY_MOVE(RenderThread);
 
