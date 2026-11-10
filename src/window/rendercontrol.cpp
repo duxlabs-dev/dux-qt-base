@@ -15,10 +15,11 @@ namespace qs::window {
 namespace {
 QS_LOGGING_CATEGORY(logRenderControl, "quickshell.window.rendercontrol", QtWarningMsg);
 WindowRenderControl* (*FACTORY)() = nullptr; // NOLINT
+bool (*USABLE)() = nullptr;                  // NOLINT
 bool ENABLED = false;                        // NOLINT
 
 bool supported() {
-	if (!FACTORY) {
+	if (!FACTORY || !USABLE) {
 		qCInfo(logRenderControl) << "Render control is unavailable on this platform.";
 		return false;
 	}
@@ -26,6 +27,12 @@ bool supported() {
 	const auto api = QQuickWindow::graphicsApi();
 	if (api != QSGRendererInterface::OpenGL && api != QSGRendererInterface::Vulkan) {
 		qCInfo(logRenderControl) << "Render control requires OpenGL or Vulkan.";
+		return false;
+	}
+
+	if (!USABLE()) {
+		qCWarning(logRenderControl) << "Render control is unavailable: the renderer cannot draw "
+		                               "into dmabufs. Windows use Qt's render loop.";
 		return false;
 	}
 
@@ -39,7 +46,10 @@ void WindowRenderControl::setEnabled(bool enabled) {
 	if (ENABLED) qs::core::FrameAnimationDriver::install();
 }
 
-void WindowRenderControl::setFactory(WindowRenderControl* (*factory)()) { FACTORY = factory; }
+void WindowRenderControl::setFactory(WindowRenderControl* (*factory)(), bool (*usable)()) {
+	FACTORY = factory;
+	USABLE = usable;
+}
 
 WindowRenderControl* WindowRenderControl::create() {
 	if (!ENABLED) return nullptr;

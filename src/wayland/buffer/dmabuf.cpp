@@ -18,6 +18,8 @@
 #include <libdrm/drm_fourcc.h>
 #include <private/qquickwindow_p.h>
 #include <private/qrhivulkan_p.h>
+#include <private/qwaylandclientbufferintegration_p.h>
+#include <private/qwaylandintegration_p.h>
 #include <qcontainerfwd.h>
 #include <qdebug.h>
 #include <qdir.h>
@@ -39,6 +41,7 @@
 #include <rhi/qrhi.h>
 #include <rhi/qrhi_platform.h>
 #include <sys/mman.h>
+#include <sys/poll.h>
 #include <sys/stat.h>
 #include <sys/sysmacros.h>
 #include <sys/types.h>
@@ -349,8 +352,29 @@ bool LinuxDmabufManager::initRenderFormatsGl(QQuickWindow* window) {
 		return false;
 	}
 
-	auto* display = qEglContext->display();
+	return this->initRenderFormatsEgl(qEglContext->display());
+}
 
+bool LinuxDmabufManager::initRenderFormatsFromPlatformDisplay() {
+	auto* integration = QtWaylandClient::QWaylandIntegration::instance()->clientBufferIntegration();
+
+	if (!integration) {
+		qCCritical(logDmabuf) << "Failed to query render formats: No client buffer integration.";
+		return false;
+	}
+
+	auto* display =
+	    integration->nativeResource(QtWaylandClient::QWaylandClientBufferIntegration::EglDisplay);
+
+	if (!display) {
+		qCCritical(logDmabuf) << "Failed to query render formats: No EGL display.";
+		return false;
+	}
+
+	return this->initRenderFormatsEgl(static_cast<EGLDisplay>(display));
+}
+
+bool LinuxDmabufManager::initRenderFormatsEgl(EGLDisplay display) {
 	static auto* eglQueryDisplayAttribEXT =
 	    eglProc<PFNEGLQUERYDISPLAYATTRIBEXTPROC>("eglQueryDisplayAttribEXT");
 	static auto* eglQueryDeviceStringEXT =
@@ -930,6 +954,34 @@ WlBufferQSGTexture* WlDmaBuffer::createQsgTexture(QQuickWindow* window) const {
 	}
 
 	return this->createQsgTextureGl(window);
+}
+
+void WlDmaBuffer::finish(QRhi* rhi) const {
+	if (rhi->backend() != QRhi::OpenGLES2) {
+		rhi->finish();
+		return;
+	}
+
+	// A driver with implicit sync fences the dmabuf until the GPU is done.
+	if (this->planeCount != 0) {
+		const auto& plane = this->planes[0]; // NOLINT
+		pollfd fenced = {.fd = plane.fd, .events = POLLIN, .revents = 0};
+		if (poll(&fenced, 1, 0) == 0) return;
+	}
+
+	rhi->makeThreadLocalNativeContextCurrent();
+	auto* display = eglGetCurrentDisplay();
+	auto* fence = eglCreateSync(display, EGL_SYNC_FENCE, nullptr);
+
+	// glFinish() spins a core on NVIDIA's driver, a fence wait sleeps.
+	if (fence == EGL_NO_SYNC) {
+		rhi->finish();
+		return;
+	}
+
+	const auto status = eglClientWaitSync(display, fence, EGL_SYNC_FLUSH_COMMANDS_BIT, EGL_FOREVER);
+	eglDestroySync(display, fence);
+	if (status != EGL_CONDITION_SATISFIED) rhi->finish();
 }
 
 WlBufferQSGTexture* WlDmaBuffer::createQsgTextureGl(QQuickWindow* window) const {

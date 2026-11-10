@@ -13,7 +13,7 @@ class WindowRenderControl: public QQuickRenderControl {
 
 public:
 	static void setEnabled(bool enabled);
-	static void setFactory(WindowRenderControl* (*factory)());
+	static void setFactory(WindowRenderControl* (*factory)(), bool (*usable)());
 	static WindowRenderControl* create();
 
 	QWindow* renderWindow(QPoint* offset) override;

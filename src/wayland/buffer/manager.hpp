@@ -10,6 +10,7 @@
 #include <qtclasshelpermacros.h>
 #include <qtmetamacros.h>
 #include <qvariant.h>
+#include <rhi/qrhi.h>
 #include <sys/types.h>
 #include <wayland-client-protocol.h>
 #include <wayland-client.h>
@@ -89,6 +90,9 @@ public:
 
 	// Must be called from render thread.
 	[[nodiscard]] virtual WlBufferQSGTexture* createQsgTexture(QQuickWindow* window) const = 0;
+	// Blocks until the GPU has drawn the frame rendered into the buffer, unless the compositor
+	// can wait for it. Must be called from render thread, after the frame ends.
+	virtual void finish(QRhi* rhi) const { rhi->finish(); }
 
 	WlBufferTransform transform;
 
@@ -129,6 +133,8 @@ public:
 	static WlBufferManager* instance();
 
 	void initWindow(QQuickWindow* window);
+	// True when render formats work, or cannot be known before a window exists.
+	[[nodiscard]] bool initWithoutWindow();
 	[[nodiscard]] bool isReady() const;
 	[[nodiscard]] WlBuffer* createBuffer(const WlBufferRequest& request);
 

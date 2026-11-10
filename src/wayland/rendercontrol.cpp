@@ -85,13 +85,15 @@ private:
 
 qs::window::WindowRenderControl* createRenderControl() { return new WaylandRenderControl(); }
 
+bool usable() { return buffer::WlBufferManager::instance()->initWithoutWindow(); }
+
 void install() {
 	if (qEnvironmentVariableIsSet("QS_DISABLE_DMABUF")) {
 		qCInfo(logRenderControl) << "Render control is unavailable with QS_DISABLE_DMABUF.";
 		return;
 	}
 
-	qs::window::WindowRenderControl::setFactory(&createRenderControl);
+	qs::window::WindowRenderControl::setFactory(&createRenderControl, &usable);
 }
 
 } // namespace
@@ -534,9 +536,9 @@ void WaylandRenderControl::drawFrame(Frame& frame) {
 	timer.start();
 	const auto finish = qScopeGuard([this, &frame, &timer] {
 		this->endFrame();
-		// As of Qt 6.12 QRhiVulkan::endOffscreenFrame() no longer waits for the GPU, and the
-		// buffer is committed without explicit sync.
-		if (frame.rendered && this->rhi->backend() == QRhi::Vulkan) this->rhi->finish();
+		// The buffer is committed without explicit sync. QRhiGles2::endOffscreenFrame() only
+		// flushes, and as of Qt 6.12 QRhiVulkan::endOffscreenFrame() no longer waits for the GPU.
+		if (frame.rendered) frame.buffer->buffer->finish(this->rhi);
 		// Collect changes made during render; WindowDamageTracker::sync() forces full damage with margins.
 		frame.damage = this->tracker ? this->tracker->damage() : std::nullopt;
 		frame.pendingDamage = this->tracker && this->tracker->pendingDamageAfterPresent();
