@@ -4,6 +4,7 @@ description = "Bundled widgets"
 headers = [
 	"wrapper.hpp",
 	"marginwrapper.hpp",
+	"textdecorations.hpp",
 ]
 
 qml_files = [

@@ -2,6 +2,7 @@ qt_add_library(quickshell-widgets STATIC
 	cliprect.cpp
 	wrapper.cpp
 	marginwrapper.cpp
+	textdecorations.cpp
 )
 
 qt_add_qml_module(quickshell-widgets
@@ -36,3 +37,7 @@ qs_module_pch(quickshell-widgets)
 
 target_link_libraries(quickshell-widgets PRIVATE Qt::Quick)
 target_link_libraries(quickshell PRIVATE quickshell-widgetsplugin)
+
+if (BUILD_TESTING)
+	add_subdirectory(test)
+endif()
