@@ -18,6 +18,7 @@
 #include <unistd.h>
 
 #include "../core/common.hpp"
+#include "../core/diskcache.hpp"
 #include "../core/instanceinfo.hpp"
 #include "../core/logging.hpp"
 #include "../core/paths.hpp"
@@ -194,6 +195,8 @@ int launch(const LaunchArgs& args, char** argv) {
 	}
 
 	pragmas.dropExpensiveFonts |= qEnvironmentVariableIntValue("QS_DROP_EXPENSIVE_FONTS") == 1;
+	pragmas.renderControl &= !qEnvironmentVariableIsSet("QS_DISABLE_RENDER_CONTROL");
+	pragmas.diskCache &= !qEnvironmentVariableIsSet("QS_DISABLE_DISK_CACHE");
 
 	if (pragmas.dropExpensiveFonts) {
 		if (auto* runDir = QsPaths::instance()->instanceRunDir()) {
@@ -245,6 +248,8 @@ int launch(const LaunchArgs& args, char** argv) {
 	// 		qputenv("QML_DISK_CACHE", "aot,qmlc");
 	// 	}
 	// }
+
+	const auto diskCache = pragmas.diskCache && qs::core::QmlDiskCache::enable();
 
 	// While the simple animation driver can lead to better animations in some cases,
 	// it also can cause excessive repainting at excessively high framerates which can
@@ -323,7 +328,7 @@ int launch(const LaunchArgs& args, char** argv) {
 	qs::ipc::IpcServer::start();
 	QsPaths::instance()->createLock();
 
-	auto root = RootWrapper(args.configPath, shellId, pragmas.diskCache);
+	const auto root = RootWrapper(args.configPath, shellId, diskCache);
 	QGuiApplication::setQuitOnLastWindowClosed(false);
 
 	exitDaemon(0);

@@ -100,6 +100,11 @@ class QuickshellGlobal: public QObject {
 	Q_PROPERTY(QString appId READ appId CONSTANT)
 	/// The time at which this Quickshell instance was launched.
 	Q_PROPERTY(QDateTime launchTime READ launchTime CONSTANT)
+	/// If windows render through the `RenderControl` pragma.
+	///
+	/// False without the pragma and where the renderer cannot draw into dmabufs. Windows then
+	/// use Qt's render loop, which draws an @@QsWindow.inputOnly window like any other.
+	Q_PROPERTY(bool renderControl READ renderControl CONSTANT)
 	/// All currently connected screens.
 	///
 	/// This property updates as connected screens change.
@@ -178,6 +183,7 @@ public:
 	[[nodiscard]] QString shellId() const;
 	[[nodiscard]] QString appId() const;
 	[[nodiscard]] QDateTime launchTime() const;
+	[[nodiscard]] bool renderControl() const;
 
 	QQmlListProperty<QuickshellScreenInfo> screens();
 

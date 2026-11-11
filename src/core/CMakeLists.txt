@@ -44,6 +44,7 @@ qt_add_library(quickshell-core STATIC
 	scriptmodel.cpp
 	colorquantizer.cpp
 	toolsupport.cpp
+	diskcache.cpp
 	streamreader.cpp
 	debuginfo.cpp
 )

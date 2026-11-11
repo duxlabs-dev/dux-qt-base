@@ -135,7 +135,10 @@ bool WlBufferManager::isReady() const {
 
 WlBufferManagerPrivate::WlBufferManagerPrivate(WlBufferManager* manager)
     : manager(manager)
-    , dmabuf(this) {}
+    , dmabuf(this) {
+	// Without feedback no dmabuf formats will ever arrive.
+	if (!this->dmabuf.hasFeedback()) this->mDmabufFormatsReady = true;
+}
 
 void WlBufferManagerPrivate::renderFormatsDone(bool success) {
 	if (!success) {

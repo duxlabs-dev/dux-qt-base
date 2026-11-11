@@ -187,6 +187,11 @@ QDateTime QuickshellGlobal::launchTime() const { // NOLINT
 	return InstanceInfo::CURRENT.launchTime;
 }
 
+bool QuickshellGlobal::renderControl() const { // NOLINT
+	// Only installed for render control; see WindowRenderControl::setEnabled().
+	return qs::core::FrameAnimationDriver::instance() != nullptr;
+}
+
 qsizetype QuickshellGlobal::screensCount(QQmlListProperty<QuickshellScreenInfo>* /*unused*/) {
 	return QuickshellTracked::instance()->screens.size();
 }

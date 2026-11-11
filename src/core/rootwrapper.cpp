@@ -15,6 +15,7 @@
 
 #include "../ui/reload_popup.hpp"
 #include "../window/floatingwindow.hpp"
+#include "diskcache.hpp"
 #include "generation.hpp"
 #include "instanceinfo.hpp"
 #include "qmlglobal.hpp"
@@ -67,6 +68,10 @@ void RootWrapper::reloadGraph(bool hard) {
 	QString mirrorPath;
 	if (tooling || this->diskCache) {
 		mirrorPath = qs::core::QmlToolingSupport::updateMirror(rootPath, scanner, this->diskCache);
+	}
+
+	if (this->diskCache && !mirrorPath.isEmpty()) {
+		qs::core::QmlDiskCache::instance()->restore(rootPath.path());
 	}
 
 	// todo: move into EngineGeneration

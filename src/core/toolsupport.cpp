@@ -1,5 +1,6 @@
 #include "toolsupport.hpp"
 #include <algorithm>
+#include <atomic>
 #include <cerrno>
 
 #include <fcntl.h>
@@ -20,6 +21,7 @@
 #include <qsavefile.h>
 #include <qset.h>
 #include <qtenvironmentvariables.h>
+#include <qthreadpool.h>
 #include <qtypes.h>
 
 #include "logcat.hpp"
@@ -69,21 +71,65 @@ QString QmlToolingSupport::updateMirror(
 	if (vfsPath.isEmpty()) return QString();
 
 	auto target = QDir(vfsPath % "/qs");
-	if (!QmlToolingSupport::mirrorDir(scanner, configRoot, target, copyDocuments)) return QString();
+	QList<Document> documents;
+
+	if (!QmlToolingSupport::mirrorDir(
+	        scanner,
+	        configRoot,
+	        target,
+	        copyDocuments ? &documents : nullptr
+	    )
+	    || !QmlToolingSupport::copyDocuments(documents))
+	{
+		return QString();
+	}
 
 	return vfsPath;
+}
+
+// A boot copies every document, which is most of the mirror's cost on one thread.
+bool QmlToolingSupport::copyDocuments(const QList<Document>& documents) {
+	auto pool = QThreadPool();
+	const auto workers = pool.maxThreadCount();
+	std::atomic<bool> copied = true;
+
+	for (auto worker = 0; worker < workers; worker++) {
+		pool.start([&documents, &copied, worker, workers] {
+			for (auto i = worker; i < documents.size(); i += workers) {
+				if (!QmlToolingSupport::copyDocument(documents.at(i))) copied = false;
+			}
+		});
+	}
+
+	pool.waitForDone();
+	return copied;
+}
+
+bool QmlToolingSupport::copyDocument(const Document& document) {
+	auto file = QFile(document.source);
+
+	if (!file.open(QFile::ReadOnly)) {
+		qCCritical(logTooling) << "Could not read" << document.source;
+		return false;
+	}
+
+	return QmlToolingSupport::writeMirrorFile(document.target, file.readAll(), document.fresh);
 }
 
 bool QmlToolingSupport::mirrorDir(
     const QmlScanner& scanner,
     const QDir& source,
     const QDir& target,
-    bool copyDocuments
+    QList<Document>* documents
 ) {
 	auto targetInfo = QFileInfo(target.path());
 	if (targetInfo.isSymLink() || (targetInfo.exists() && !targetInfo.isDir())) {
 		QmlToolingSupport::removeMirrorEntry(target.path());
+		targetInfo.refresh();
 	}
+
+	// A dir created here has nothing to compare against or clean up, which is every dir on boot.
+	const auto fresh = !targetInfo.exists();
 
 	if (!target.mkpath(".")) {
 		qCCritical(logTooling) << "Could not create mirror dir at" << target.path();
@@ -100,7 +146,10 @@ bool QmlToolingSupport::mirrorDir(
 		if (name.contains('/')) continue;
 
 		names.insert(name);
-		if (!QmlToolingSupport::writeMirrorFile(target.filePath(name), text.toUtf8())) return false;
+
+		if (!QmlToolingSupport::writeMirrorFile(target.filePath(name), text.toUtf8(), fresh)) {
+			return false;
+		}
 	}
 
 	for (const auto& name: source.entryList(QDir::AllEntries | QDir::NoDotAndDotDot)) {
@@ -110,8 +159,12 @@ bool QmlToolingSupport::mirrorDir(
 		auto path = source.filePath(name);
 		auto entryTarget = target.filePath(name);
 
-		if (!QmlToolingSupport::mirrorEntry(scanner, path, entryTarget, copyDocuments)) return false;
+		if (!QmlToolingSupport::mirrorEntry(scanner, path, entryTarget, documents, fresh)) {
+			return false;
+		}
 	}
+
+	if (fresh) return true;
 
 	auto stale = QDir::AllEntries | QDir::Hidden | QDir::System | QDir::NoDotAndDotDot;
 
@@ -126,34 +179,50 @@ bool QmlToolingSupport::mirrorEntry(
     const QmlScanner& scanner,
     const QString& path,
     const QString& target,
-    bool copyDocuments
+    QList<Document>* documents,
+    bool fresh
 ) {
 	auto info = QFileInfo(path);
 
 	if (info.isDir()) {
 		// symlinked dirs can loop, so only the ones the scanner went through are entered
 		if (info.isSymLink() && !scannerVisited(scanner, path % '/')) {
-			return QmlToolingSupport::linkMirrorEntry(path, target);
+			return QmlToolingSupport::linkMirrorEntry(path, target, fresh);
 		}
 
-		return QmlToolingSupport::mirrorDir(scanner, QDir(path), QDir(target), copyDocuments);
+		return QmlToolingSupport::mirrorDir(scanner, QDir(path), QDir(target), documents);
 	}
 
 	auto name = info.fileName();
 	auto isDocument = name.endsWith(".qml") || name.endsWith(".js") || name.endsWith(".mjs");
-	if (!copyDocuments || !isDocument) return QmlToolingSupport::linkMirrorEntry(path, target);
-
-	auto file = QFile(path);
-
-	if (!file.open(QFile::ReadOnly)) {
-		qCCritical(logTooling) << "Could not read" << path;
-		return false;
+	if (!documents || !isDocument) {
+		return QmlToolingSupport::linkMirrorEntry(path, target, fresh);
 	}
 
-	return QmlToolingSupport::writeMirrorFile(target, file.readAll());
+	documents->append({.source = path, .target = target, .fresh = fresh});
+	return true;
 }
 
-bool QmlToolingSupport::writeMirrorFile(const QString& path, const QByteArray& data) {
+bool QmlToolingSupport::writeMirrorFile(const QString& path, const QByteArray& data, bool fresh) {
+	// The disk cache compares source mtimes (QV4::CompiledData::Unit::verifyHeader), which
+	// are all 1 in the nix store, so the mtime comes from the content. 2000..2030, never 0.
+	const auto hash = QCryptographicHash::hash(data, QCryptographicHash::Md5);
+	const auto secs = 946684800 + qFromBigEndian<quint32>(hash.constData()) % 946684800;
+	const auto time = QDateTime::fromSecsSinceEpoch(secs);
+	auto file = QFile(path);
+
+	if (fresh) {
+		// Unbuffered, or the write lands after the time is set.
+		if (!file.open(QFile::WriteOnly | QFile::Unbuffered) || file.write(data) != data.length()
+		    || !file.setFileTime(time, QFile::FileModificationTime))
+		{
+			qCCritical(logTooling) << "Failed to write mirror file" << path;
+			return false;
+		}
+
+		return true;
+	}
+
 	auto info = QFileInfo(path);
 	if (info.isSymLink() || (info.exists() && !info.isFile())) {
 		QmlToolingSupport::removeMirrorEntry(path);
@@ -170,15 +239,7 @@ bool QmlToolingSupport::writeMirrorFile(const QString& path, const QByteArray& d
 		return false;
 	}
 
-	// The disk cache compares source mtimes (QV4::CompiledData::Unit::verifyHeader), which
-	// are all 1 in the nix store, so the mtime comes from the content. 2000..2030, never 0.
-	auto hash = QCryptographicHash::hash(data, QCryptographicHash::Md5);
-	auto secs = 946684800 + qFromBigEndian<quint32>(hash.constData()) % 946684800;
-	auto file = QFile(path);
-
-	if (!file.open(QFile::ReadWrite)
-	    || !file.setFileTime(QDateTime::fromSecsSinceEpoch(secs), QFile::FileModificationTime))
-	{
+	if (!file.open(QFile::ReadWrite) || !file.setFileTime(time, QFile::FileModificationTime)) {
 		qCCritical(logTooling) << "Failed to set mirror file time on" << path;
 		return false;
 	}
@@ -187,18 +248,21 @@ bool QmlToolingSupport::writeMirrorFile(const QString& path, const QByteArray& d
 	return true;
 }
 
-bool QmlToolingSupport::linkMirrorEntry(const QString& path, const QString& target) {
-	auto info = QFileInfo(target);
-	if (info.isSymLink() && info.symLinkTarget() == path) return true;
+bool QmlToolingSupport::linkMirrorEntry(const QString& path, const QString& target, bool fresh) {
+	if (!fresh) {
+		const auto info = QFileInfo(target);
+		if (info.isSymLink() && info.symLinkTarget() == path) return true;
 
-	QmlToolingSupport::removeMirrorEntry(target);
+		QmlToolingSupport::removeMirrorEntry(target);
+	}
 
 	if (!QFile::link(path, target)) {
 		qCCritical(logTooling) << "Could not create symlink to" << path << "at" << target;
 		return false;
 	}
 
-	qCDebug(logTooling) << "Created symlink to" << path << "at" << target;
+	// Debug messages always reach the detailed log, one per entry of a new mirror is a cost.
+	if (!fresh) qCDebug(logTooling) << "Created symlink to" << path << "at" << target;
 	return true;
 }
 

@@ -233,6 +233,8 @@ class LinuxDmabufManager
 public:
 	explicit LinuxDmabufManager(WlBufferManagerPrivate* manager);
 
+	[[nodiscard]] bool hasFeedback() const;
+
 	[[nodiscard]] WlBuffer* createDmabuf(const WlBufferRequest& request);
 
 	[[nodiscard]] WlBuffer* createDmabuf(

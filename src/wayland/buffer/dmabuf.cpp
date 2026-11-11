@@ -320,10 +320,20 @@ LinuxDmabufManager::LinuxDmabufManager(WlBufferManagerPrivate* manager)
 	MANAGER = this;
 	this->initialize();
 
-	if (this->isActive()) {
-		qCDebug(logDmabuf) << "Requesting default dmabuf feedback...";
-		new LinuxDmabufFeedback(this->get_default_feedback());
+	if (!this->hasFeedback()) {
+		qCInfo(logDmabuf) << "The compositor has no dmabuf feedback, buffers fall back to SHM.";
+		return;
 	}
+
+	qCDebug(logDmabuf) << "Requesting default dmabuf feedback...";
+	new LinuxDmabufFeedback(this->get_default_feedback());
+}
+
+// Requesting feedback from an older zwp_linux_dmabuf_v1 is a fatal protocol error.
+bool LinuxDmabufManager::hasFeedback() const {
+	return this->isActive()
+	    && this->QtWayland::zwp_linux_dmabuf_v1::version()
+	           >= ZWP_LINUX_DMABUF_V1_GET_DEFAULT_FEEDBACK_SINCE_VERSION;
 }
 
 bool LinuxDmabufManager::initRenderFormats(QQuickWindow* window) {
