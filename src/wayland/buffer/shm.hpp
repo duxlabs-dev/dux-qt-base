@@ -1,8 +1,11 @@
 #pragma once
 
+#include <cstddef>
+#include <cstdint>
 #include <memory>
 
 #include <private/qwaylandshmbackingstore_p.h>
+#include <qimage.h>
 #include <qquickwindow.h>
 #include <qsgtexture.h>
 #include <qsize.h>
@@ -56,6 +59,33 @@ private:
 class ShmbufManager {
 public:
 	[[nodiscard]] static WlBuffer* createShmbuf(const WlBufferRequest& request);
+};
+
+// Unlike QWaylandShmBuffer's, the wl_buffer has no listener, so the owner can track releases.
+class WlShmTarget: public WlBuffer {
+public:
+	~WlShmTarget() override;
+	Q_DISABLE_COPY_MOVE(WlShmTarget);
+
+	[[nodiscard]] static WlShmTarget* create(QSize size, uint32_t format);
+
+	[[nodiscard]] wl_buffer* buffer() const override { return this->mBuffer; }
+	[[nodiscard]] QSize size() const override { return this->mImage.size(); }
+	[[nodiscard]] bool isCompatible(const WlBufferRequest& request) const override;
+	// Written by the CPU only, never sampled.
+	[[nodiscard]] WlBufferQSGTexture* createQsgTexture(QQuickWindow* window) const override;
+
+	[[nodiscard]] QImage* image() { return &this->mImage; }
+
+private:
+	WlShmTarget() = default;
+
+	wl_buffer* mBuffer = nullptr;
+	void* memory = nullptr;
+	size_t length = 0;
+	uint32_t format = 0;
+	// Wraps memory.
+	QImage mImage;
 };
 
 } // namespace qs::wayland::buffer::shm

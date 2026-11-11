@@ -27,6 +27,10 @@ namespace qs::window {
 class WindowDamageTracker;
 }
 
+namespace qs::wayland::buffer::shm {
+class WlShmTarget;
+}
+
 namespace QtWaylandClient { // NOLINT(readability-identifier-naming)
 class QWaylandWindow;
 }
@@ -51,6 +55,8 @@ public:
 	bool busy = false;
 	// Keep the dmabuf alive until the GL objects are destroyed.
 	std::unique_ptr<buffer::WlBuffer> buffer;
+	// Set when buffer is a shm fallback; drawFrame() reads texture back into it.
+	buffer::shm::WlShmTarget* shm = nullptr;
 	std::unique_ptr<buffer::WlBufferQSGTexture> import;
 	std::unique_ptr<QRhiTexture> texture;
 	std::shared_ptr<QRhiRenderBuffer> depthStencil;
@@ -161,6 +167,8 @@ private:
 	std::unique_ptr<DecorationTarget> decoration;
 	qs::window::WindowDamageTracker* tracker = nullptr;
 	std::unique_ptr<buffer::WlBuffer> pixel;
+	// Render thread only. Outlives the QRhi, which may complete a readback after its frame failed.
+	QRhiReadbackResult readback;
 	QTimer trimTimer;
 	bool bufferAwaited = false;
 	bool pixelAttached = false;

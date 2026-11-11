@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(dux-qt-base VERSION "0.3.8" LANGUAGES CXX C)
+project(dux-qt-base VERSION "0.3.9" LANGUAGES CXX C)
 
 set(UNRELEASED_FEATURES)
 

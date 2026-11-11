@@ -1,5 +1,8 @@
 #include "shm.hpp"
 #include <algorithm>
+#include <cstddef>
+#include <cstdint>
+#include <limits>
 #include <memory>
 
 #include <private/qwaylanddisplay_p.h>
@@ -7,10 +10,16 @@
 #include <private/qwaylandshm_p.h>
 #include <private/qwaylandshmbackingstore_p.h>
 #include <qdebug.h>
+#include <qimage.h>
 #include <qlogging.h>
 #include <qloggingcategory.h>
 #include <qquickwindow.h>
+#include <qscopeguard.h>
 #include <qsize.h>
+#include <qtypes.h>
+#include <sys/mman.h>
+#include <sys/types.h>
+#include <unistd.h>
 #include <wayland-client-protocol.h>
 
 #include "../../core/logcat.hpp"
@@ -90,5 +99,90 @@ WlBuffer* ShmbufManager::createShmbuf(const WlBufferRequest& request) {
 
 	qCDebug(logShm) << "Created shmbuf" << buffer;
 	return buffer;
+}
+
+WlShmTarget::~WlShmTarget() {
+	if (this->mBuffer) wl_buffer_destroy(this->mBuffer); // NOLINT(misc-include-cleaner)
+	// Drop the image before the memory it wraps.
+	this->mImage = QImage();
+	if (this->memory) munmap(this->memory, this->length);
+}
+
+WlShmTarget* WlShmTarget::create(QSize size, uint32_t format) {
+	static const auto* waylandIntegration = QtWaylandClient::QWaylandIntegration::instance();
+	auto* shm = waylandIntegration->display()->shm();
+	if (!shm || size.isEmpty()) return nullptr;
+
+	const auto stride = static_cast<qsizetype>(size.width()) * 4;
+	const auto length = static_cast<size_t>(stride) * static_cast<size_t>(size.height());
+	if (length > static_cast<size_t>(std::numeric_limits<int32_t>::max())) {
+		qCWarning(logShm) << "Shm buffer of size" << size << "is too large.";
+		return nullptr;
+	}
+
+	auto fd = memfd_create("quickshell:shm", MFD_CLOEXEC);
+	if (fd == -1) {
+		qCWarning(logShm) << "Failed to create shm memory:" << qt_error_string(-1);
+		return nullptr;
+	}
+
+	auto closeFd = qScopeGuard([&] { close(fd); });
+	if (ftruncate(fd, static_cast<off_t>(length)) == -1) {
+		qCWarning(logShm) << "Failed to size shm memory:" << qt_error_string(-1);
+		return nullptr;
+	}
+
+	auto* memory = mmap(nullptr, length, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+	if (memory == MAP_FAILED) { // NOLINT
+		qCWarning(logShm) << "Failed to map shm memory:" << qt_error_string(-1);
+		return nullptr;
+	}
+
+	// Unmaps memory on failure.
+	auto buffer = std::unique_ptr<WlShmTarget>(new WlShmTarget());
+	buffer->memory = memory;
+	buffer->length = length;
+	buffer->format = format;
+	buffer->mImage = QImage(
+	    static_cast<uchar*>(memory),
+	    size.width(),
+	    size.height(),
+	    stride,
+	    QtWaylandClient::QWaylandShm::formatFrom(static_cast<::wl_shm_format>(format)) // NOLINT
+	);
+
+	// NOLINTNEXTLINE(misc-include-cleaner)
+	auto* pool = wl_shm_create_pool(shm->object(), fd, static_cast<int32_t>(length));
+	if (pool) {
+		buffer->mBuffer = wl_shm_pool_create_buffer( // NOLINT(misc-include-cleaner)
+		    pool,
+		    0,
+		    size.width(),
+		    size.height(),
+		    static_cast<int32_t>(stride),
+		    format
+		);
+		wl_shm_pool_destroy(pool); // NOLINT(misc-include-cleaner)
+	}
+
+	if (!buffer->mBuffer) {
+		qCWarning(logShm) << "Failed to create shm buffer of size" << size;
+		return nullptr;
+	}
+
+	qCDebug(logShm) << "Created shm target of size" << size;
+	return buffer.release();
+}
+
+bool WlShmTarget::isCompatible(const WlBufferRequest& request) const {
+	if (QSize(static_cast<int>(request.width), static_cast<int>(request.height)) != this->size()) {
+		return false;
+	}
+
+	return std::ranges::find(request.shm.formats, this->format) != request.shm.formats.end();
+}
+
+WlBufferQSGTexture* WlShmTarget::createQsgTexture(QQuickWindow* /*window*/) const {
+	return nullptr;
 }
 } // namespace qs::wayland::buffer::shm

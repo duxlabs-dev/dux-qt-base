@@ -24,6 +24,7 @@
 #include <qobject.h>
 #include <qoffscreensurface.h> // NOLINT(misc-include-cleaner)
 #include <qpa/qplatformwindow.h>
+#include <qpainter.h>
 #include <qpoint.h>
 #include <qpointer.h>
 #include <qquickgraphicsdevice.h>
@@ -82,6 +83,27 @@ public:
 private:
 	QSize mSize;
 };
+
+// The readback keeps the texture's row order, which drawFrame() already mirrored to match the surface.
+bool copyReadback(const QRhiReadbackResult& result, QImage* image) {
+	const auto size = result.pixelSize;
+	const auto length = static_cast<qsizetype>(size.width()) * size.height() * 4;
+	if (result.format != QRhiTexture::RGBA8 || size != image->size() || result.data.size() < length) {
+		return false;
+	}
+
+	const auto source = QImage(
+	    reinterpret_cast<const uchar*>(result.data.constData()),
+	    size.width(),
+	    size.height(),
+	    QImage::Format_RGBA8888_Premultiplied
+	);
+
+	auto painter = QPainter(image);
+	painter.setCompositionMode(QPainter::CompositionMode_Source);
+	painter.drawImage(0, 0, source);
+	return true;
+}
 
 qs::window::WindowRenderControl* createRenderControl() { return new WaylandRenderControl(); }
 
@@ -165,6 +187,19 @@ SurfaceBuffer* SurfaceBufferPool::create(QSize size, bool alpha) {
 	result->size = size;
 	result->alpha = alpha;
 	result->buffer.reset(buffer::WlBufferManager::instance()->createBuffer(request));
+
+	if (!result->buffer) {
+		static auto logged = false;
+		if (!std::exchange(logged, true)) {
+			qCWarning(logRenderControl) << "No dmabuf render target is available, frames are copied "
+			                               "into shm buffers instead.";
+		}
+
+		const auto format = alpha ? WL_SHM_FORMAT_ARGB8888 : WL_SHM_FORMAT_XRGB8888;
+		result->shm = buffer::shm::WlShmTarget::create(size, format);
+		result->buffer.reset(result->shm);
+	}
+
 	if (!result->buffer) return nullptr;
 	wl_buffer_add_listener(result->buffer->buffer(), &LISTENER, result.get());
 
@@ -175,14 +210,21 @@ SurfaceBuffer* SurfaceBufferPool::create(QSize size, bool alpha) {
 bool SurfaceBufferPool::prepare(QQuickWindow* window, QRhi* rhi, SurfaceBuffer* buffer) {
 	if (buffer->renderTarget) return true;
 	const auto size = buffer->size;
-	buffer->import.reset(buffer->buffer->createQsgTexture(window));
-	if (!buffer->import) return false;
 
-	// The image's own format: QRhiVulkan creates the view with it.
-	auto* imported = buffer->import->texture()->rhiTexture();
-	const auto native = imported->nativeTexture();
-	buffer->texture.reset(rhi->newTexture(imported->format(), size, 1, QRhiTexture::RenderTarget));
-	if (!buffer->texture->createFrom({.object = native.object, .layout = 0})) return false;
+	if (buffer->shm) {
+		const auto flags = QRhiTexture::RenderTarget | QRhiTexture::UsedAsTransferSource;
+		buffer->texture.reset(rhi->newTexture(QRhiTexture::RGBA8, size, 1, flags));
+		if (!buffer->texture->create()) return false;
+	} else {
+		buffer->import.reset(buffer->buffer->createQsgTexture(window));
+		if (!buffer->import) return false;
+
+		// The image's own format: QRhiVulkan creates the view with it.
+		auto* imported = buffer->import->texture()->rhiTexture();
+		const auto native = imported->nativeTexture();
+		buffer->texture.reset(rhi->newTexture(imported->format(), size, 1, QRhiTexture::RenderTarget));
+		if (!buffer->texture->createFrom({.object = native.object, .layout = 0})) return false;
+	}
 
 	if (!this->depthStencil || this->depthStencil->pixelSize() != size) {
 		this->depthStencil.reset(rhi->newRenderBuffer(QRhiRenderBuffer::DepthStencil, size));
@@ -534,11 +576,14 @@ void WaylandRenderControl::advanceAnimators() {
 void WaylandRenderControl::drawFrame(Frame& frame) {
 	QElapsedTimer timer;
 	timer.start();
-	const auto finish = qScopeGuard([this, &frame, &timer] {
+	auto readbackQueued = false;
+	const auto finish = qScopeGuard([this, &frame, &timer, &readbackQueued] {
 		this->endFrame();
 		// The buffer is committed without explicit sync. QRhiGles2::endOffscreenFrame() only
 		// flushes, and as of Qt 6.12 QRhiVulkan::endOffscreenFrame() no longer waits for the GPU.
 		if (frame.rendered) frame.buffer->buffer->finish(this->rhi);
+		// The finished frame completed the readback.
+		if (readbackQueued) frame.failed = !copyReadback(this->readback, frame.buffer->shm->image());
 		// Collect changes made during render; WindowDamageTracker::sync() forces full damage with margins.
 		frame.damage = this->tracker ? this->tracker->damage() : std::nullopt;
 		frame.pendingDamage = this->tracker && this->tracker->pendingDamageAfterPresent();
@@ -570,6 +615,16 @@ void WaylandRenderControl::drawFrame(Frame& frame) {
 		frame.failed = !this->drawDecoration(frame.decoration, frame.buffer, frame.decorationOffset);
 	}
 	if (frame.failed) return;
+
+	if (frame.buffer->shm) {
+		this->readback = {};
+		auto* updates = this->rhi->nextResourceUpdateBatch();
+		updates->readBackTexture(QRhiReadbackDescription(frame.buffer->texture.get()), &this->readback);
+		this->commandBuffer()->resourceUpdate(updates);
+		readbackQueued = true;
+		return;
+	}
+
 	frame.buffer->import->release(this->commandBuffer(), frame.buffer->texture.get());
 }
 
