@@ -31,6 +31,12 @@ public:
 		return end;
 	}
 
+	// The period of the fastest rendering window, or idle when none renders.
+	[[nodiscard]] std::int64_t shortestPeriod(std::int64_t idle) const {
+		if (this->windows.empty()) return idle;
+		return std::ranges::min(std::views::values(this->windows), {}, &Window::period).period;
+	}
+
 	// When the earliest window stops counting as rendering, for when its next frame never starts.
 	[[nodiscard]] std::int64_t expiry() const {
 		auto earliest = NONE;

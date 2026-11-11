@@ -44,6 +44,8 @@ public:
 	// Null while a rendered frame waits for its commit.
 	static std::atomic<bool>* openIncubation();
 	static std::chrono::nanoseconds incubationBudget();
+	// A third of the fastest rendering window's frame, taken when its frames leave no gap.
+	static std::chrono::nanoseconds forcedIncubationBudget();
 	static std::chrono::nanoseconds incubationWake();
 
 	void advance() override;

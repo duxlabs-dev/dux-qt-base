@@ -160,7 +160,7 @@ void QsIncubationController::incubateBetweenFrames() {
 			this->wake.start();
 			return;
 		}
-		budget = std::chrono::milliseconds(this->incubationTime);
+		budget = qs::core::FrameAnimationDriver::forcedIncubationBudget();
 	}
 
 	// The released hold dispatches the next slice.

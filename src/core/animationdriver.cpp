@@ -26,6 +26,7 @@ FrameAnimationDriver* DRIVER = nullptr; // NOLINT
 std::atomic<bool> INCUBATING = false;   // NOLINT
 std::atomic<int> UNCOMMITTED = 0;       // NOLINT
 constexpr qint64 NS_PER_MS = 1000000;
+constexpr std::int64_t FORCED_SLICE_DIVISOR = 3;
 
 std::int64_t periodOf(double refreshRate) {
 	const auto rate = std::isfinite(refreshRate) && refreshRate > 0 ? refreshRate : 60;
@@ -121,6 +122,12 @@ std::chrono::nanoseconds FrameAnimationDriver::incubationBudget() {
 	if (!DRIVER) return {};
 	const auto now = DRIVER->timer.nsecsElapsed();
 	return std::chrono::nanoseconds(DRIVER->schedule.deadline(now, fastestPeriod()) - now);
+}
+
+std::chrono::nanoseconds FrameAnimationDriver::forcedIncubationBudget() {
+	if (!DRIVER) return {};
+	const auto period = DRIVER->schedule.shortestPeriod(fastestPeriod());
+	return std::chrono::nanoseconds(period / FORCED_SLICE_DIVISOR);
 }
 
 std::chrono::nanoseconds FrameAnimationDriver::incubationWake() {
