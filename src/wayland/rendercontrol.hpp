@@ -4,6 +4,7 @@
 #include <optional>
 #include <vector>
 
+#include <qcolor.h>
 #include <qcoreevent.h>
 #include <qimage.h>
 #include <qobject.h>
@@ -39,6 +40,7 @@ namespace qs::wayland::render {
 
 class SurfaceBufferPool;
 class RenderThread;
+struct SceneClip;
 class PresentationTracker;
 class WaylandRenderControl;
 
@@ -62,6 +64,11 @@ public:
 	std::shared_ptr<QRhiRenderBuffer> depthStencil;
 	std::unique_ptr<QRhiRenderPassDescriptor> renderPass;
 	std::unique_ptr<QRhiTextureRenderTarget> renderTarget;
+	// Keeps the color contents so drawFrame() can repaint only the damage.
+	std::unique_ptr<QRhiRenderPassDescriptor> partialPass;
+	std::unique_ptr<QRhiTextureRenderTarget> partialTarget;
+	// Render thread only. Pixels the scene changed since this was drawn; unset until it holds a frame.
+	std::optional<QRegion> stale;
 };
 
 class SurfaceBufferPool {
@@ -71,7 +78,9 @@ public:
 	[[nodiscard]] bool available(QSize size, bool alpha) const;
 	// Requires available(size, alpha).
 	SurfaceBuffer* acquire(QSize size, bool alpha);
-	bool prepare(QQuickWindow* window, QRhi* rhi, SurfaceBuffer* buffer);
+	bool prepare(QQuickWindow* window, QRhi* rhi, SurfaceBuffer* buffer, bool partial);
+	// Render thread, frame in flight. `changed` is unset when the whole frame changed.
+	void drawn(SurfaceBuffer* buffer, const std::optional<QRegion>& changed);
 	void clear();
 	// Drops idle buffers other than the last acquired one.
 	bool trim();
@@ -129,7 +138,10 @@ private:
 		qreal scale = 1;
 		QImage decoration;
 		QPoint decorationOffset;
+		QColor color;
 		std::optional<QRegion> damage;
+		// Buffer pixels the pass was clipped to, empty when it drew the whole buffer.
+		QRect clip;
 		quint64 revision = 0;
 		quint64 serial = 0;
 		qint64 requested = 0;
@@ -151,6 +163,14 @@ private:
 	void queueFrame();
 	void renderFrame();
 	void advanceAnimators();
+	[[nodiscard]] bool partialRepaint() const;
+	// Returns whether the scene was just wrapped, which damages all of it.
+	bool attachClip();
+	// Buffer pixels to repaint, empty for the whole buffer.
+	[[nodiscard]] static QRect clipRect(const Frame& frame, const QRegion& changed);
+	void applyClip(const Frame& frame);
+	// `tracked` is set when the damage held every pixel the scene changed before the pass.
+	void frameDrawn(const Frame& frame, bool tracked);
 	void drawFrame(Frame& frame);
 	void finishFrame(const std::shared_ptr<Frame>& frame);
 	bool commitFrame(const Frame& frame, QtWaylandClient::QWaylandWindow* waylandWindow);
@@ -169,6 +189,8 @@ private:
 	std::unique_ptr<buffer::WlBuffer> pixel;
 	// Render thread only. Outlives the QRhi, which may complete a readback after its frame failed.
 	QRhiReadbackResult readback;
+	// Render thread only. Set while partial repaint has the scene wrapped; see attachClip().
+	std::unique_ptr<SceneClip> sceneClip;
 	QTimer trimTimer;
 	bool bufferAwaited = false;
 	bool pixelAttached = false;

@@ -70,7 +70,7 @@ ProxyWindowBase* ProxyWindowBase::forObject(QObject* obj) {
 
 void ProxyWindowBase::onReload(QObject* oldInstance) {
 	if (this->mVisible) this->window = this->retrieveWindow(oldInstance);
-	auto wasVisible = this->window != nullptr && this->window->isVisible();
+	const auto wasVisible = this->window != nullptr && this->window->isVisible();
 
 	if (this->mVisible) this->ensureQWindow();
 
@@ -127,8 +127,8 @@ void ProxyWindowBase::ensureQWindow() {
 		if (useStencil && format.stencilBufferSize() == -1) format.setStencilBufferSize(8);
 		else if (!useStencil) format.setStencilBufferSize(0);
 
-		auto opaque = this->qsSurfaceFormat.opaqueModified ? this->qsSurfaceFormat.opaque
-		                                                   : this->mColor.alpha() >= 255;
+		const auto opaque = this->qsSurfaceFormat.opaqueModified ? this->qsSurfaceFormat.opaque
+		                                                         : this->mColor.alpha() >= 255;
 
 		format.setOption(QSurfaceFormat::ResetNotification);
 
@@ -146,15 +146,7 @@ void ProxyWindowBase::ensureQWindow() {
 
 	this->mSurfaceFormat = format;
 
-	auto useOldWindow = this->window != nullptr;
-
-	if (useOldWindow) {
-		if (this->window->requestedFormat() != format) {
-			useOldWindow = false;
-		}
-	}
-
-	if (useOldWindow) return;
+	if (this->window != nullptr && this->window->requestedFormat() == format) return;
 	delete this->window;
 	this->window = nullptr; // createQQuickWindow may indirectly reference this->window
 	this->window = this->createQQuickWindow();
@@ -194,6 +186,8 @@ ProxiedWindow* ProxyWindowBase::disownWindow(bool keepItemOwnership) {
 
 	auto* window = this->window;
 	this->window = nullptr;
+	// The window outlives this proxy until it is deleted or connectWindow() adopts it.
+	window->setProxy(nullptr);
 	return window;
 }
 
@@ -403,7 +397,7 @@ void ProxyWindowBase::setHeight(qint32 height) {
 
 void ProxyWindowBase::setScreen(QuickshellScreenInfo* screen) {
 	auto* qscreen = screen == nullptr ? nullptr : screen->screen;
-	auto newMScreen = this->mScreen != qscreen;
+	const auto newMScreen = this->mScreen != qscreen;
 
 	if (this->mScreen && newMScreen) {
 		QObject::disconnect(this->mScreen, nullptr, this, nullptr);
@@ -416,7 +410,7 @@ void ProxyWindowBase::setScreen(QuickshellScreenInfo* screen) {
 		if (this->window == nullptr) {
 			emit this->screenChanged();
 		} else if (qscreen) {
-			auto reshow = this->isVisibleDirect();
+			const auto reshow = this->isVisibleDirect();
 			if (reshow) this->setVisibleDirect(false);
 			if (this->window != nullptr) this->window->setScreen(qscreen);
 			if (reshow) this->setVisibleDirect(true);
@@ -448,7 +442,7 @@ void ProxyWindowBase::setColor(QColor color) {
 	if (this->window == nullptr) {
 		if (color != this->mColor) emit this->colorChanged();
 	} else {
-		auto premultiplied = QColor::fromRgbF(
+		const auto premultiplied = QColor::fromRgbF(
 		    color.redF() * color.alphaF(),
 		    color.greenF() * color.alphaF(),
 		    color.blueF() * color.alphaF(),
@@ -656,7 +650,7 @@ void QsQuickWindowBase::requestCommit() {
 }
 
 void QsQuickWindowBase::onSceneGraphInitialized() {
-	for (auto& cb: SCENEGRAPH_INIT_CALLBACKS) {
+	for (const auto& cb: SCENEGRAPH_INIT_CALLBACKS) {
 		cb(this);
 	}
 

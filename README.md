@@ -96,6 +96,9 @@ Each window gets a render thread and graphics device. To render on the GUI
 thread, set `QS_RENDER_THREAD=0`. Hiding a window releases its surface buffers.
 Windows with `inputOnly` use a transparent pixel scaled to the window size.
 
+On OpenGL a frame redraws only its damaged part. Set `QS_NO_PARTIAL_REPAINT=1`
+to redraw whole frames.
+
 For frame timing logs, set:
 
 ```sh

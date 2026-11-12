@@ -28,6 +28,8 @@ public:
 	// Geometry still needs preprocess; see SceneDamageTracker::measureGeometry().
 	[[nodiscard]] bool pendingPreprocess() const;
 	[[nodiscard]] bool pendingDamageAfterPresent() const;
+	// Reports `region` again after the present, for a pass that left it undrawn.
+	void damageAfterPresent(const QRegion& region);
 	void beginRender();
 	void presented();
 

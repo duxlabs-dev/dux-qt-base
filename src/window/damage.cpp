@@ -139,7 +139,7 @@ QRegion uniteRects(const QList<QRect>& rects) {
 
 	QRegion region;
 	for (const auto& rect: rects) {
-		auto covers = [&rect](const QRect& other) {
+		const auto covers = [&rect](const QRect& other) {
 			return other.left() <= rect.left() && other.top() <= rect.top()
 			    && other.right() >= rect.right() && other.bottom() >= rect.bottom();
 		};
@@ -167,6 +167,7 @@ public:
 	[[nodiscard]] std::optional<QRegion> damage() const;
 	[[nodiscard]] bool pendingPreprocess() const { return this->unmeasured; }
 	[[nodiscard]] bool pendingDamageAfterPresent() const { return !this->nextDamage.isEmpty(); }
+	void damageAfterPresent(const QRegion& region) { this->nextDamage += region; }
 	void presented();
 
 protected:
@@ -281,7 +282,7 @@ SceneDamageTracker::Bounds SceneDamageTracker::listedShader(QSGMaterial* materia
 	const auto cached = this->listedShaders.constFind(material->type());
 	if (cached != this->listedShaders.cend()) return *cached;
 
-	auto shader = std::unique_ptr<QSGMaterialShader>(
+	const auto shader = std::unique_ptr<QSGMaterialShader>(
 	    material->createShader(QSGRendererInterface::RenderMode2D)
 	);
 	auto file =
@@ -301,10 +302,10 @@ SceneDamageTracker::Bounds SceneDamageTracker::listedShader(QSGMaterial* materia
 }
 
 bool SceneDamageTracker::boundedEffectShader(QSGMaterial* material) {
-	auto shader = std::unique_ptr<QSGMaterialShader>(
+	const auto shader = std::unique_ptr<QSGMaterialShader>(
 	    material->createShader(QSGRendererInterface::RenderMode2D)
 	);
-	auto vertex = QSGMaterialShaderPrivate::get(shader.get())->shader(QShader::VertexStage);
+	const auto vertex = QSGMaterialShaderPrivate::get(shader.get())->shader(QShader::VertexStage);
 	if (!vertex.isValid()) return false;
 	if (std::ranges::find(this->effectShaders, vertex) != this->effectShaders.end()) return true;
 
@@ -382,13 +383,13 @@ void SceneDamageTracker::forgetChildren(QSGNode* node) {
 }
 
 void SceneDamageTracker::addDamage(const QRectF& rect) {
-	auto aligned = rect.toAlignedRect();
+	const auto aligned = rect.toAlignedRect();
 	if (aligned.isEmpty()) return;
 	this->pending.append(aligned);
 }
 
 QRectF SceneDamageTracker::windowRect(QSGNode* node) const {
-	auto subtree = this->subtrees.value(node);
+	const auto subtree = this->subtrees.value(node);
 	auto window = QRectF(QPointF(), this->size);
 	if (subtree.unbounded) return window;
 	if (subtree.rect.isEmpty()) return QRectF();
@@ -448,7 +449,7 @@ SceneDamageTracker::Subtree SceneDamageTracker::refresh(QSGNode* node) {
 	}
 
 	for (auto* child = node->firstChild(); child; child = child->nextSibling()) {
-		auto cached = this->subtrees.constFind(child);
+		const auto cached = this->subtrees.constFind(child);
 		auto entry = cached == this->subtrees.cend() || this->stale.contains(child)
 		               ? this->refresh(child)
 		               : *cached;
@@ -463,7 +464,7 @@ SceneDamageTracker::Subtree SceneDamageTracker::refresh(QSGNode* node) {
 // Cached bounds only grow here; refresh() can shrink them later.
 void SceneDamageTracker::propagate(QSGNode* node, Subtree subtree) {
 	for (auto* parent = node->parent(); parent; parent = parent->parent()) {
-		auto cached = this->subtrees.find(parent);
+		const auto cached = this->subtrees.find(parent);
 		if (cached == this->subtrees.end()) return;
 
 		if (parent->type() == QSGNode::TransformNodeType) {
@@ -478,7 +479,7 @@ void SceneDamageTracker::propagate(QSGNode* node, Subtree subtree) {
 }
 
 SceneDamageTracker::Subtree SceneDamageTracker::measureGeometry(QSGGeometryNode* node) {
-	auto glyph = dynamic_cast<QSGGlyphNode*>(node) != nullptr;
+	const auto glyph = dynamic_cast<QSGGlyphNode*>(node) != nullptr;
 	const auto bounds = this->shaderBounds(node, glyph, node->material());
 	if (bounds == Bounds::Unknown) return UNBOUNDED;
 	if (node->opaqueMaterial() && this->shaderBounds(node, glyph, node->opaqueMaterial()) != bounds) {
@@ -506,7 +507,7 @@ SceneDamageTracker::Subtree SceneDamageTracker::measureGeometry(QSGGeometryNode*
 		return UNBOUNDED;
 	}
 
-	auto mode = geometry->drawingMode();
+	const auto mode = geometry->drawingMode();
 	if (mode != QSGGeometry::DrawTriangles && mode != QSGGeometry::DrawTriangleStrip
 	    && mode != QSGGeometry::DrawTriangleFan)
 	{
@@ -526,7 +527,7 @@ SceneDamageTracker::Subtree SceneDamageTracker::measureGeometry(QSGGeometryNode*
 	auto top = left;
 	auto right = std::numeric_limits<float>::lowest();
 	auto bottom = right;
-	auto stride = static_cast<size_t>(geometry->sizeOfVertex());
+	const auto stride = static_cast<size_t>(geometry->sizeOfVertex());
 	auto vertices = std::span(
 	    static_cast<const char*>(geometry->vertexData()),
 	    stride * static_cast<size_t>(geometry->vertexCount())
@@ -554,7 +555,7 @@ SceneDamageTracker::Subtree SceneDamageTracker::measureGeometry(QSGGeometryNode*
 
 	auto* material = node->material();
 	const auto& type = typeid(*material);
-	auto antialiased =
+	const auto antialiased =
 	    glyph || type == typeid(QSGSmoothColorMaterial) || type == typeid(QSGSmoothTextureMaterial);
 
 	auto rect = QRectF(QPointF(left, top), QPointF(right, bottom));
@@ -637,7 +638,7 @@ void SceneDamageTracker::renderScene() {
 
 	if (this->rendering) {
 		for (auto* node: std::as_const(this->staleTextures)) {
-			auto rect = this->windowRect(node).toAlignedRect();
+			const auto rect = this->windowRect(node).toAlignedRect();
 			if (!rect.isEmpty()) this->nextDamage += rect;
 		}
 
@@ -721,6 +722,10 @@ bool WindowDamageTracker::pendingDamageAfterPresent() const {
 	return this->tracker && this->tracker->pendingDamageAfterPresent();
 }
 
+void WindowDamageTracker::damageAfterPresent(const QRegion& region) {
+	if (this->tracker) this->tracker->damageAfterPresent(region);
+}
+
 void WindowDamageTracker::beginRender() {
 	if (this->tracker) this->tracker->beginRender();
 }
@@ -730,7 +735,7 @@ std::optional<QRegion> WindowDamageTracker::damage() {
 	this->tracker->renderScene();
 
 	// Keep full damage for one frame after external rendering stops.
-	auto external = this->window->hasRenderReceivers();
+	const auto external = this->window->hasRenderReceivers();
 	if (this->externalRendering && !external) this->tracker->markFull();
 	this->externalRendering = external;
 

@@ -7,6 +7,7 @@
 #include <libdrm/drm_fourcc.h>
 #include <private/qquickanimatorcontroller_p.h>
 #include <private/qquickwindow_p.h>
+#include <private/qsgrenderer_p.h>
 #include <private/qwaylandabstractdecoration_p.h>
 #include <private/qwaylandbuffer_p.h>
 #include <private/qwaylanddisplay_p.h>
@@ -27,6 +28,7 @@
 #include <qpainter.h>
 #include <qpoint.h>
 #include <qpointer.h>
+#include <qquickgraphicsconfiguration.h>
 #include <qquickgraphicsdevice.h>
 #include <qquickrendertarget.h>
 #include <qquickwindow.h>
@@ -34,6 +36,10 @@
 #include <qregion.h>
 #include <qscopeguard.h>
 #include <qsemaphore.h>
+#include <qsgflatcolormaterial.h>
+#include <qsggeometry.h>
+#include <qsgmaterial.h>
+#include <qsgnode.h>
 #include <qsize.h>
 #include <qstring.h>
 #include <qsurfaceformat.h>
@@ -105,6 +111,28 @@ bool copyReadback(const QRhiReadbackResult& result, QImage* image) {
 	return true;
 }
 
+// Logical window damage as the buffer pixels it touches.
+QRegion bufferRegion(const QRegion& damage, qreal scale, QSize size) {
+	QRegion region;
+	for (const auto& rect: damage) {
+		const auto scaled = QRectF(rect.topLeft().toPointF() * scale, rect.size().toSizeF() * scale);
+		region += scaled.toAlignedRect();
+	}
+
+	return region & QRect(QPoint(), size);
+}
+
+// Buffer pixels as the logical window damage that covers them.
+QRegion windowRegion(const QRegion& pixels, qreal scale) {
+	QRegion region;
+	for (const auto& rect: pixels) {
+		const auto scaled = QRectF(rect.topLeft().toPointF() / scale, rect.size().toSizeF() / scale);
+		region += scaled.toAlignedRect();
+	}
+
+	return region;
+}
+
 qs::window::WindowRenderControl* createRenderControl() { return new WaylandRenderControl(); }
 
 bool usable() { return buffer::WlBufferManager::instance()->initWithoutWindow(); }
@@ -119,6 +147,31 @@ void install() {
 }
 
 } // namespace
+
+// Render thread only. Not owned by the scene graph, which detaches them when it is destroyed.
+struct SceneClip {
+	SceneClip() {
+		// Nodes are owned by their parent by default, and these are members.
+		this->fillClip.setFlag(QSGNode::OwnedByParent, false);
+		this->fill.setFlag(QSGNode::OwnedByParent, false);
+		this->scene.setFlag(QSGNode::OwnedByParent, false);
+		this->fill.setGeometry(&this->geometry);
+		this->fill.setMaterial(&this->material);
+		// QSG_VISUALIZE=clip reads the geometry of every clip node; see RhiVisualizer::ClipVis::gather().
+		this->fillClip.setGeometry(&this->geometry);
+		this->scene.setGeometry(&this->geometry);
+		this->fillClip.setIsRectangular(true);
+		this->fillClip.appendChildNode(&this->fill);
+		this->scene.setIsRectangular(true);
+	}
+
+	QSGGeometry geometry = QSGGeometry(QSGGeometry::defaultAttributes_Point2D(), 4);
+	QSGFlatColorMaterial material;
+	QSizeF size;
+	QSGClipNode fillClip;
+	QSGGeometryNode fill;
+	QSGClipNode scene;
+};
 
 SurfaceBuffer::~SurfaceBuffer() { this->pool->control->releaseBuffer(this); }
 
@@ -157,8 +210,10 @@ void SurfaceBufferPool::clear() {
 }
 
 bool SurfaceBufferPool::trim() {
-	auto idle = [this](const auto& buffer) { return buffer.get() != this->current && !buffer->busy; };
-	auto dropped = std::erase_if(this->buffers, idle) != 0;
+	const auto idle = [this](const auto& buffer) {
+		return buffer.get() != this->current && !buffer->busy;
+	};
+	const auto dropped = std::erase_if(this->buffers, idle) != 0;
 	if (this->buffers.empty()) this->control->releaseDepthStencil(this->depthStencil);
 	return dropped;
 }
@@ -207,7 +262,12 @@ SurfaceBuffer* SurfaceBufferPool::create(QSize size, bool alpha) {
 	return this->buffers.emplace_back(std::move(result)).get();
 }
 
-bool SurfaceBufferPool::prepare(QQuickWindow* window, QRhi* rhi, SurfaceBuffer* buffer) {
+bool SurfaceBufferPool::prepare(
+    QQuickWindow* window,
+    QRhi* rhi,
+    SurfaceBuffer* buffer,
+    bool partial
+) {
 	if (buffer->renderTarget) return true;
 	const auto size = buffer->size;
 
@@ -241,9 +301,26 @@ bool SurfaceBufferPool::prepare(QQuickWindow* window, QRhi* rhi, SurfaceBuffer* 
 	buffer->renderTarget.reset(rhi->newTextureRenderTarget(description));
 	buffer->renderPass.reset(buffer->renderTarget->newCompatibleRenderPassDescriptor());
 	buffer->renderTarget->setRenderPassDescriptor(buffer->renderPass.get());
-	if (buffer->renderTarget->create()) return true;
-	buffer->renderTarget.reset();
-	return false;
+	if (!buffer->renderTarget->create()) {
+		buffer->renderTarget.reset();
+		return false;
+	}
+
+	if (!partial || buffer->shm) return true;
+	const auto preserve = QRhiTextureRenderTarget::PreserveColorContents;
+	buffer->partialTarget.reset(rhi->newTextureRenderTarget(description, preserve));
+	buffer->partialPass.reset(buffer->partialTarget->newCompatibleRenderPassDescriptor());
+	buffer->partialTarget->setRenderPassDescriptor(buffer->partialPass.get());
+	if (!buffer->partialTarget->create()) buffer->partialTarget.reset();
+	return true;
+}
+
+void SurfaceBufferPool::drawn(SurfaceBuffer* buffer, const std::optional<QRegion>& changed) {
+	for (const auto& other: this->buffers) {
+		if (other.get() == buffer) other->stale = QRegion();
+		else if (!changed) other->stale.reset();
+		else if (other->stale) *other->stale += *changed;
+	}
 }
 
 WaylandRenderControl::WaylandRenderControl(): pool(this) {
@@ -267,6 +344,8 @@ void WaylandRenderControl::releaseScene() {
 		this->rhi->makeThreadLocalNativeContextCurrent();
 		// Invalidate before releasing rhi; QQuickRenderControl::~QQuickRenderControl() is too late.
 		this->invalidate();
+		// The scene graph is gone, so these nodes are detached; see QSGNode::destroy().
+		this->sceneClip.reset();
 		this->decoration.reset();
 		this->prepareThread(this->thread());
 	});
@@ -281,6 +360,8 @@ void WaylandRenderControl::releaseBuffer(SurfaceBuffer* buffer) {
 		// WlDmaBufferQSGTexture's destructor needs the current context.
 		if (this->rhi) this->rhi->makeThreadLocalNativeContextCurrent();
 		buffer->renderTarget.reset();
+		buffer->partialTarget.reset();
+		buffer->partialPass.reset();
 		buffer->renderPass.reset();
 		buffer->depthStencil.reset();
 		buffer->texture.reset();
@@ -506,6 +587,7 @@ void WaylandRenderControl::renderFrame() {
 	frame->surfaceSize = waylandWindow->surfaceSize();
 	frame->scale = waylandWindow->scale();
 	frame->contentSize = window->size() * frame->scale;
+	frame->color = window->color();
 	frame->revision = this->commitRevision;
 	frame->serial = ++FRAME_SERIAL;
 	frame->requested = std::exchange(this->requestedAt, 0);
@@ -573,11 +655,91 @@ void WaylandRenderControl::advanceAnimators() {
 	controller->unlock();
 }
 
+bool WaylandRenderControl::partialRepaint() const {
+	static const bool disabled = qEnvironmentVariableIsSet("QS_NO_PARTIAL_REPAINT");
+	// Only OpenGL: on Vulkan a buffer rendered with its contents kept came out wrong.
+	if (disabled || this->rhi->backend() != QRhi::OpenGLES2) return false;
+	// Without the depth buffer the renderer blends every node, so a transparent fill clears nothing.
+	return this->window()->graphicsConfiguration().isDepthBufferEnabledFor2D();
+}
+
+// Qt Quick takes no clip from outside, so the scene goes under a clip node and the renderer
+// scissors every batch. The unblended fill stands in for the clear a partial repaint skips.
+bool WaylandRenderControl::attachClip() {
+	auto* root = QQuickWindowPrivate::get(this->window())->renderer->rootNode();
+	if (!this->sceneClip) this->sceneClip = std::make_unique<SceneClip>();
+	auto& clip = *this->sceneClip;
+	if (clip.scene.parent() == root) return false;
+
+	while (auto* child = root->firstChild()) {
+		root->removeChildNode(child);
+		clip.scene.appendChildNode(child);
+	}
+
+	root->appendChildNode(&clip.fillClip);
+	root->appendChildNode(&clip.scene);
+	return true;
+}
+
+QRect WaylandRenderControl::clipRect(const Frame& frame, const QRegion& changed) {
+	const auto* buffer = frame.buffer;
+	if (!buffer->stale || !buffer->partialTarget) return {};
+	// The fill writes premultiplied color, the clear it replaces the color as it is.
+	if (frame.color.alpha() != 255 && frame.color.rgba() != 0) return {};
+
+	const auto clip = (changed + *buffer->stale).boundingRect();
+	// Heuristic: a clip over most of the buffer is drawn whole.
+	const auto area = static_cast<qint64>(clip.width()) * clip.height();
+	const auto whole = static_cast<qint64>(buffer->size.width()) * buffer->size.height();
+	return area * 2 > whole ? QRect() : clip;
+}
+
+// The renderer reads the clip rects while it prepares the pass, so they need no dirty marks,
+// which the damage tracker would count as damage.
+void WaylandRenderControl::applyClip(const Frame& frame) {
+	auto& clip = *this->sceneClip;
+	const auto window = QRectF(QPointF(), frame.contentSize.toSizeF() / frame.scale);
+	const auto rect = QRectF(
+	    frame.clip.topLeft().toPointF() / frame.scale,
+	    frame.clip.size().toSizeF() / frame.scale
+	);
+
+	clip.fillClip.setClipRect(frame.clip.isEmpty() ? QRectF() : rect);
+	clip.scene.setClipRect(frame.clip.isEmpty() ? window : rect);
+
+	if (clip.size != window.size()) {
+		clip.size = window.size();
+		QSGGeometry::updateRectGeometry(&clip.geometry, window);
+		clip.fill.markDirty(QSGNode::DirtyGeometry);
+	}
+
+	if (clip.material.color() != frame.color) {
+		clip.material.setColor(frame.color);
+		// setColor() blends any color that is not opaque.
+		clip.material.setFlag(QSGMaterial::Blending, false);
+		clip.fill.markDirty(QSGNode::DirtyMaterial);
+	}
+}
+
+// Animators and preprocess change the scene during the pass, after the clip was chosen; see
+// QQuickAnimatorController::advance(). The other buffers lack those changes too.
+void WaylandRenderControl::frameDrawn(const Frame& frame, bool tracked) {
+	const auto size = frame.buffer->size;
+	std::optional<QRegion> changed;
+	if (tracked && frame.damage) changed = bufferRegion(*frame.damage, frame.scale, size);
+	this->pool.drawn(frame.buffer, changed);
+	if (frame.clip.isEmpty()) return;
+
+	const auto unpainted = changed.value_or(QRect(QPoint(), size)) - frame.clip;
+	this->tracker->damageAfterPresent(windowRegion(unpainted, frame.scale));
+}
+
 void WaylandRenderControl::drawFrame(Frame& frame) {
 	QElapsedTimer timer;
 	timer.start();
 	auto readbackQueued = false;
-	const auto finish = qScopeGuard([this, &frame, &timer, &readbackQueued] {
+	auto tracked = false;
+	const auto finish = qScopeGuard([this, &frame, &timer, &readbackQueued, &tracked] {
 		this->endFrame();
 		// The buffer is committed without explicit sync. QRhiGles2::endOffscreenFrame() only
 		// flushes, and as of Qt 6.12 QRhiVulkan::endOffscreenFrame() no longer waits for the GPU.
@@ -586,15 +748,18 @@ void WaylandRenderControl::drawFrame(Frame& frame) {
 		if (readbackQueued) frame.failed = !copyReadback(this->readback, frame.buffer->shm->image());
 		// Collect changes made during render; WindowDamageTracker::sync() forces full damage with margins.
 		frame.damage = this->tracker ? this->tracker->damage() : std::nullopt;
+		if (frame.rendered && !frame.failed) this->frameDrawn(frame, tracked);
 		frame.pendingDamage = this->tracker && this->tracker->pendingDamageAfterPresent();
 		frame.renderNs = timer.nsecsElapsed();
 	});
+	const auto partial = this->partialRepaint();
+	const auto wrapped = partial && this->attachClip();
 	frame.damage = this->tracker ? this->tracker->damage() : std::nullopt;
 	frame.rendered = frame.repaint || !this->tracker || frame.damage != QRegion()
 	              || this->tracker->pendingPreprocess();
 	if (!frame.rendered) return;
 	if (frame.decoration.isNull()) this->decoration.reset();
-	if (!this->pool.prepare(this->window(), this->rhi, frame.buffer)) {
+	if (!this->pool.prepare(this->window(), this->rhi, frame.buffer, partial)) {
 		frame.failed = true;
 		return;
 	}
@@ -605,6 +770,20 @@ void WaylandRenderControl::drawFrame(Frame& frame) {
 		frame.failed = true;
 		return;
 	}
+
+	// Set when the damage holds every pixel the scene changed since the last frame. A decorated
+	// buffer is offset from the window, and glyphs laid out during the pass are not measured yet.
+	const auto measured = this->tracker && !this->tracker->pendingPreprocess();
+	tracked = partial && !frame.repaint && !wrapped && measured && frame.damage
+	       && frame.decoration.isNull();
+	if (tracked) {
+		const auto changed = bufferRegion(*frame.damage, frame.scale, frame.buffer->size);
+		frame.clip = WaylandRenderControl::clipRect(frame, changed);
+	}
+
+	if (!frame.clip.isEmpty()) target = frame.buffer->partialTarget.get();
+	if (this->sceneClip) this->applyClip(frame);
+
 	auto renderTarget = QQuickRenderTarget::fromRhiRenderTarget(target);
 	// Match the surface orientation when the framebuffer's Y axis points up.
 	renderTarget.setMirrorVertically(this->rhi->isYUpInFramebuffer());
@@ -639,8 +818,8 @@ void WaylandRenderControl::finishFrame(const std::shared_ptr<Frame>& frame) {
 	if (frameTracingEnabled()) {
 		qCDebug(logFrame) << "frame" << frame->serial << window << "polish_us" << frame->polishNs / 1000
 		                  << "sync_us" << frame->syncNs / 1000 << "render_us" << frame->renderNs / 1000
-		                  << "rendered" << frame->rendered << "valid" << valid << "failed"
-		                  << frame->failed;
+		                  << "rendered" << frame->rendered << "clip" << frame->clip << "valid" << valid
+		                  << "failed" << frame->failed;
 	}
 
 	if (!valid) {
@@ -815,7 +994,7 @@ bool WaylandRenderControl::drawDecoration(
 		updates->uploadTexture(target->decoration.get(), converted);
 	}
 
-	auto bufferRect = QRect(QPoint(), buffer->size);
+	const auto bufferRect = QRect(QPoint(), buffer->size);
 
 	QRhiTextureCopyDescription frame;
 	frame.setPixelSize(QRect(QPoint(), image.size()).intersected(bufferRect).size());
