@@ -5,18 +5,27 @@
 #include <qrect.h>
 #include <qtclasshelpermacros.h>
 #include <qwayland-ext-image-copy-capture-v1.h>
+#include <wayland-ext-image-capture-source-v1-client-protocol.h>
+#include <wayland-ext-image-copy-capture-v1-client-protocol.h>
+#include <wayland-util.h>
 
+#include "../../buffer/manager.hpp"
 #include "../manager.hpp"
 
 namespace qs::wayland::screencopy::icc {
 
+// NOLINTNEXTLINE(misc-multiple-inheritance)
 class IccScreencopyContext
     : public ScreencopyContext
     , public QtWayland::ext_image_copy_capture_session_v1
     , public QtWayland::ext_image_copy_capture_frame_v1 {
 
 public:
-	IccScreencopyContext(::ext_image_copy_capture_session_v1* session);
+	IccScreencopyContext(
+	    ::ext_image_capture_source_v1* source,
+	    ::ext_image_copy_capture_session_v1* session
+	);
+
 	~IccScreencopyContext() override;
 	Q_DISABLE_COPY_MOVE(IccScreencopyContext);
 
@@ -41,9 +50,11 @@ private:
 	void clearOldState();
 	void doCapture();
 
+	::ext_image_capture_source_v1* source;
 	buffer::WlBufferRequest request;
 	bool statePending = true;
 	bool capturePending = false;
+	bool stateChanged = false;
 	QRect damage;
 	QRect lastDamage;
 };

@@ -25,6 +25,11 @@ class ScreencopyView: public QQuickItem {
 	///   or both `ext-image-copy-capture-v1` and `ext-capture-source-v1`.
 	/// - @@Quickshell.Wayland.Toplevel - A toplevel window.
 	///   Requires a compositor that supports `hyprland-toplevel-export-v1`.
+	/// - @@Quickshell.Wayland.ExtToplevel - A toplevel window.
+	///   Requires a compositor that supports `ext-image-copy-capture-v1` and the
+	///   foreign toplevel source of `ext-image-capture-source-v1`.
+	///
+	/// See @@Screencopy for which toplevel types the compositor can capture.
 	Q_PROPERTY(QObject* captureSource READ captureSource WRITE setCaptureSource NOTIFY captureSourceChanged);
 	/// If true, the system cursor will be painted on the image. Defaults to false.
 	Q_PROPERTY(bool paintCursor READ paintCursors WRITE setPaintCursors NOTIFY paintCursorsChanged);
@@ -43,8 +48,6 @@ class ScreencopyView: public QQuickItem {
 
 public:
 	explicit ScreencopyView(QQuickItem* parent = nullptr);
-
-	void componentComplete() override;
 
 	/// Capture a single frame. Has no effect if @@live is true.
 	Q_INVOKABLE void captureFrame();
@@ -74,12 +77,13 @@ signals:
 	void constraintSizeChanged();
 
 protected:
+	void componentComplete() override;
 	QSGNode* updatePaintNode(QSGNode* oldNode, UpdatePaintNodeData* data) override;
 
 private slots:
 	void onCaptureSourceDestroyed();
 	void onFrameCaptured();
-	void destroyContextWithUpdate() { this->destroyContext(); }
+	void onContextStopped();
 	void onBuffersReady();
 
 private:

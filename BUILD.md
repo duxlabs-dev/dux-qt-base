@@ -74,11 +74,12 @@ Dependencies: `wayland` (libwayland-client), `wayland-scanner` (build-time),
 Subfeatures with no extra dependencies:
 - `-DWAYLAND_WLR_LAYERSHELL=OFF` ([zwlr-layer-shell-v1])
 - `-DWAYLAND_SESSION_LOCK=OFF` ([ext-session-lock-v1])
-- `-DWAYLAND_TOPLEVEL_MANAGEMENT=OFF` ([zwlr-foreign-toplevel-management-v1])
+- `-DWAYLAND_TOPLEVEL_MANAGEMENT=OFF` ([zwlr-foreign-toplevel-management-v1], [ext-foreign-toplevel-list-v1])
 
 [zwlr-layer-shell-v1]: https://wayland.app/protocols/wlr-layer-shell-unstable-v1
 [ext-session-lock-v1]: https://wayland.app/protocols/ext-session-lock-v1
 [zwlr-foreign-toplevel-management-v1]: https://wayland.app/protocols/wlr-foreign-toplevel-management-unstable-v1
+[ext-foreign-toplevel-list-v1]: https://wayland.app/protocols/ext-foreign-toplevel-list-v1
 
 #### Screencopy
 Streams video from monitors and toplevels.
@@ -90,6 +91,8 @@ Dependencies: `libgbm`, `egl`, `vulkan-headers` (build-time).
 Per-protocol switches: `-DSCREENCOPY_ICC=OFF` ([ext-image-copy-capture-v1]),
 `-DSCREENCOPY_WLR=OFF` ([zwlr-screencopy-v1]),
 `-DSCREENCOPY_HYPRLAND_TOPLEVEL=OFF` ([hyprland-toplevel-export-v1]).
+
+Capturing toplevels over ext-image-copy-capture-v1 also needs `WAYLAND_TOPLEVEL_MANAGEMENT`.
 
 [ext-image-copy-capture-v1]: https://wayland.app/protocols/ext-image-copy-capture-v1
 [zwlr-screencopy-v1]: https://wayland.app/protocols/wlr-screencopy-unstable-v1

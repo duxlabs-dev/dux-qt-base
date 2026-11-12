@@ -15,7 +15,7 @@ namespace qs::wayland::screencopy {
 
 ScreencopyView::ScreencopyView(QQuickItem* parent): QQuickItem(parent) {
 	this->bImplicitSize.setBinding([this] {
-		auto constraint = this->bConstraintSize.value();
+		const auto constraint = this->bConstraintSize.value();
 		auto size = this->bSourceSize.value().toSizeF();
 
 		if (constraint.width() != 0 && constraint.height() != 0) {
@@ -32,8 +32,12 @@ ScreencopyView::ScreencopyView(QQuickItem* parent): QQuickItem(parent) {
 
 void ScreencopyView::setCaptureSource(QObject* captureSource) {
 	if (captureSource == this->mCaptureSource) return;
-	auto hadContext = this->context != nullptr;
+	const auto hadContext = this->context != nullptr;
 	this->destroyContext(false);
+
+	if (this->mCaptureSource) {
+		QObject::disconnect(this->mCaptureSource, nullptr, this, nullptr);
+	}
 
 	this->mCaptureSource = captureSource;
 
@@ -55,6 +59,12 @@ void ScreencopyView::setCaptureSource(QObject* captureSource) {
 void ScreencopyView::onCaptureSourceDestroyed() {
 	this->mCaptureSource = nullptr;
 	this->destroyContext();
+	emit this->captureSourceChanged();
+}
+
+void ScreencopyView::onContextStopped() {
+	this->destroyContext();
+	emit this->stopped();
 }
 
 void ScreencopyView::setPaintCursors(bool paintCursors) {
@@ -90,7 +100,7 @@ void ScreencopyView::createContext() {
 	    this->context,
 	    &ScreencopyContext::stopped,
 	    this,
-	    &ScreencopyView::destroyContextWithUpdate
+	    &ScreencopyView::onContextStopped
 	);
 
 	QObject::connect(
@@ -104,7 +114,7 @@ void ScreencopyView::createContext() {
 }
 
 void ScreencopyView::destroyContext(bool update) {
-	auto hadContext = this->context != nullptr;
+	const auto hadContext = this->context != nullptr;
 	delete this->context;
 	this->context = nullptr;
 	this->bHasContent = false;
@@ -166,7 +176,7 @@ QSGNode* ScreencopyView::updatePaintNode(QSGNode* oldNode, UpdatePaintNodeData* 
 		node = new buffer::WlBufferQSGDisplayNode(this->window());
 	}
 
-	auto& swapchain = this->context->swapchain();
+	const auto& swapchain = this->context->swapchain();
 	node->syncSwapchain(swapchain);
 	node->setRect(this->boundingRect());
 	node->setFiltering(QSGTexture::Linear); // NOLINT (misc-include-cleaner)
@@ -176,7 +186,7 @@ QSGNode* ScreencopyView::updatePaintNode(QSGNode* oldNode, UpdatePaintNodeData* 
 }
 
 void ScreencopyView::updateImplicitSize() {
-	auto size = this->bImplicitSize.value();
+	const auto size = this->bImplicitSize.value();
 	this->setImplicitSize(size.width(), size.height());
 }
 

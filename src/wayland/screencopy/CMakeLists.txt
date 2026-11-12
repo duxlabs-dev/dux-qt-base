@@ -1,6 +1,7 @@
 qt_add_library(quickshell-wayland-screencopy STATIC
 	manager.cpp
 	view.cpp
+	qml.cpp
 )
 
 qt_add_qml_module(quickshell-wayland-screencopy
@@ -24,6 +25,10 @@ endif()
 if (SCREENCOPY_HYPRLAND_TOPLEVEL)
 	add_subdirectory(hyprland_screencopy)
 	list(APPEND SCREENCOPY_MODULES quickshell-wayland-screencopy-hyprland)
+endif()
+
+if (SCREENCOPY_ICC AND WAYLAND_TOPLEVEL_MANAGEMENT)
+	set(SCREENCOPY_ICC_TOPLEVEL ON)
 endif()
 
 configure_file(build.hpp.in build.hpp @ONLY)

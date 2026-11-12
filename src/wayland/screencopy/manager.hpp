@@ -28,6 +28,9 @@ protected:
 class ScreencopyManager {
 public:
 	static ScreencopyContext* createContext(QObject* object, bool paintCursors);
+
+	[[nodiscard]] static bool canCaptureToplevels();
+	[[nodiscard]] static bool canCaptureExtToplevels();
 };
 
 } // namespace qs::wayland::screencopy

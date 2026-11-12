@@ -21,6 +21,11 @@
 #include "hyprland_screencopy/hyprland_screencopy.hpp"
 #endif
 
+#if SCREENCOPY_ICC_TOPLEVEL
+#include "../toplevel/ext_qml.hpp"
+#include "../toplevel/ext_toplevel.hpp"
+#endif
+
 namespace qs::wayland::screencopy {
 
 ScreencopyContext* ScreencopyManager::createContext(QObject* object, bool paintCursors) {
@@ -30,7 +35,7 @@ ScreencopyContext* ScreencopyManager::createContext(QObject* object, bool paintC
 #if SCREENCOPY_ICC
 		{
 			auto* manager = icc::IccOutputSourceManager::instance();
-			if (manager->isActive()) {
+			if (manager->isActive() && icc::IccManager::instance()->isActive()) {
 				return manager->captureOutput(screen->screen, paintCursors);
 			}
 		}
@@ -50,9 +55,33 @@ ScreencopyContext* ScreencopyManager::createContext(QObject* object, bool paintC
 			return manager->captureToplevel(toplevel->implHandle(), paintCursors);
 		}
 #endif
+#if SCREENCOPY_ICC_TOPLEVEL
+	} else if (auto* toplevel = qobject_cast<toplevel::ExtToplevel*>(object)) {
+		auto* manager = icc::IccToplevelSourceManager::instance();
+		if (ScreencopyManager::canCaptureExtToplevels()) {
+			return manager->captureToplevel(toplevel->implHandle()->object(), paintCursors);
+		}
+#endif
 	}
 
 	return nullptr;
+}
+
+bool ScreencopyManager::canCaptureToplevels() {
+#if SCREENCOPY_HYPRLAND_TOPLEVEL
+	return hyprland::HyprlandScreencopyManager::instance()->isActive();
+#else
+	return false;
+#endif
+}
+
+bool ScreencopyManager::canCaptureExtToplevels() {
+#if SCREENCOPY_ICC_TOPLEVEL
+	return icc::IccManager::instance()->isActive()
+	    && icc::IccToplevelSourceManager::instance()->isActive();
+#else
+	return false;
+#endif
 }
 
 } // namespace qs::wayland::screencopy

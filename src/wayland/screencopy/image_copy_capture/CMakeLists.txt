@@ -2,7 +2,10 @@ qt_add_library(quickshell-wayland-screencopy-icc STATIC
 	image_copy_capture.cpp
 )
 
-wl_proto(wlp-ext-foreign-toplevel ext-foreign-toplevel-list-v1 "${WAYLAND_PROTOCOLS}/staging/ext-foreign-toplevel-list")
+if (NOT TARGET wlp-ext-foreign-toplevel)
+	wl_proto(wlp-ext-foreign-toplevel ext-foreign-toplevel-list-v1 "${WAYLAND_PROTOCOLS}/staging/ext-foreign-toplevel-list")
+endif()
+
 wl_proto(wlp-image-copy-capture ext-image-copy-capture-v1 "${WAYLAND_PROTOCOLS}/staging/ext-image-copy-capture")
 wl_proto(wlp-image-capture-source ext-image-capture-source-v1 "${WAYLAND_PROTOCOLS}/staging/ext-image-capture-source")
 

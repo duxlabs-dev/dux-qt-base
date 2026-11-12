@@ -10,6 +10,8 @@
 #include <qwayland-ext-image-copy-capture-v1.h>
 #include <qwaylandclientextension.h>
 #include <sys/types.h>
+#include <wayland-ext-foreign-toplevel-list-v1-client-protocol.h>
+#include <wayland-ext-image-capture-source-v1-client-protocol.h>
 #include <wayland-ext-image-copy-capture-v1-client-protocol.h>
 #include <wayland-util.h>
 
@@ -26,8 +28,12 @@ QS_LOGGING_CATEGORY(logIcc, "quickshell.wayland.screencopy.icc", QtWarningMsg);
 using IccCaptureSession = QtWayland::ext_image_copy_capture_session_v1;
 using IccCaptureFrame = QtWayland::ext_image_copy_capture_frame_v1;
 
-IccScreencopyContext::IccScreencopyContext(::ext_image_copy_capture_session_v1* session)
-    : IccCaptureSession(session) {}
+IccScreencopyContext::IccScreencopyContext(
+    ::ext_image_capture_source_v1* source,
+    ::ext_image_copy_capture_session_v1* session
+)
+    : IccCaptureSession(session)
+    , source(source) {}
 
 IccScreencopyContext::~IccScreencopyContext() {
 	if (this->IccCaptureSession::object()) {
@@ -37,6 +43,8 @@ IccScreencopyContext::~IccScreencopyContext() {
 	if (this->IccCaptureFrame::object()) {
 		this->IccCaptureFrame::destroy();
 	}
+
+	ext_image_capture_source_v1_destroy(this->source);
 }
 
 void IccScreencopyContext::captureFrame() {
@@ -80,7 +88,7 @@ void IccScreencopyContext::ext_image_copy_capture_session_v1_dmabuf_format(
 	this->clearOldState();
 
 	auto* modifierArray = reinterpret_cast<uint64_t*>(modifiers->data);
-	auto modifierCount = modifiers->size / sizeof(uint64_t);
+	const auto modifierCount = modifiers->size / sizeof(uint64_t);
 
 	auto reqFormat = buffer::WlBufferRequest::DmaFormat(format);
 
@@ -108,11 +116,13 @@ void IccScreencopyContext::clearOldState() {
 	if (!this->statePending) {
 		this->request = buffer::WlBufferRequest();
 		this->statePending = true;
+		this->stateChanged = true;
 	}
 }
 
 void IccScreencopyContext::doCapture() {
 	this->capturePending = false;
+	this->stateChanged = false;
 
 	auto newBuffer = false;
 	auto* backbuffer = this->mSwapchain.createBackbuffer(this->request, &newBuffer);
@@ -181,8 +191,20 @@ void IccScreencopyContext::ext_image_copy_capture_frame_v1_ready() {
 void IccScreencopyContext::ext_image_copy_capture_frame_v1_failed(uint32_t reason) {
 	switch (static_cast<IccCaptureFrame::failure_reason>(reason)) {
 	case IccCaptureFrame::failure_reason_buffer_constraints:
-		qFatal(logIcc) << "Got a buffer_constraints failure, however the buffer matches the last sent "
-		                  "size. There is a bug in quickshell or your compositor.";
+		this->IccCaptureFrame::destroy();
+
+		// The source can change size while a frame is in flight, which is routine for toplevels.
+		if (this->statePending) {
+			this->capturePending = true;
+		} else if (this->stateChanged) {
+			this->doCapture();
+		} else {
+			qCWarning(logIcc) << "Got a buffer_constraints failure, however the buffer matches the last "
+			                     "sent size. Waiting for updated buffer creation parameters before "
+			                     "trying again.";
+			this->capturePending = true;
+		}
+
 		break;
 	case IccCaptureFrame::failure_reason_stopped:
 		// Handled in the ExtCaptureSession handler.
@@ -207,7 +229,7 @@ IccManager::createSession(::ext_image_capture_source_v1* source, bool paintCurso
 	    source,
 	    paintCursors ? QtWayland::ext_image_copy_capture_manager_v1::options_paint_cursors : 0
 	);
-	return new IccScreencopyContext(session);
+	return new IccScreencopyContext(source, session);
 }
 
 IccOutputSourceManager::IccOutputSourceManager(): QWaylandClientExtensionTemplate(1) {
@@ -229,6 +251,24 @@ ScreencopyContext* IccOutputSourceManager::captureOutput(QScreen* screen, bool p
 	    this->create_source(waylandScreen->output()),
 	    paintCursors
 	);
+}
+
+IccToplevelSourceManager::IccToplevelSourceManager(): QWaylandClientExtensionTemplate(1) {
+	this->initialize();
+}
+
+IccToplevelSourceManager* IccToplevelSourceManager::instance() {
+	static auto* instance = new IccToplevelSourceManager();
+	return instance;
+}
+
+ScreencopyContext* IccToplevelSourceManager::captureToplevel(
+    ::ext_foreign_toplevel_handle_v1* handle,
+    bool paintCursors
+) {
+	if (handle == nullptr) return nullptr;
+
+	return IccManager::instance()->createSession(this->create_source(handle), paintCursors);
 }
 
 } // namespace qs::wayland::screencopy::icc

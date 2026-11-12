@@ -1,6 +1,8 @@
 qt_add_library(quickshell-wayland-toplevel-management STATIC
 	wlr_toplevel.cpp
 	qml.cpp
+	ext_toplevel.cpp
+	ext_qml.cpp
 )
 
 qt_add_qml_module(quickshell-wayland-toplevel-management
@@ -16,9 +18,13 @@ qs_add_module_deps_light(quickshell-wayland-toplevel-management
 
 wl_proto(wlp-foreign-toplevel wlr-foreign-toplevel-management-unstable-v1 "${CMAKE_CURRENT_SOURCE_DIR}")
 
+if (NOT TARGET wlp-ext-foreign-toplevel)
+	wl_proto(wlp-ext-foreign-toplevel ext-foreign-toplevel-list-v1 "${WAYLAND_PROTOCOLS}/staging/ext-foreign-toplevel-list")
+endif()
+
 target_link_libraries(quickshell-wayland-toplevel-management PRIVATE
 	Qt::Quick Qt::WaylandClient Qt::WaylandClientPrivate wayland-client
-	wlp-foreign-toplevel
+	wlp-foreign-toplevel wlp-ext-foreign-toplevel
 )
 
 qs_module_pch(quickshell-wayland-toplevel-management SET large)
