@@ -5,6 +5,7 @@
 #include <bit>
 #include <qlatin1stringview.h>
 #include <qobject.h>
+#include <qpointer.h>
 #include <qproperty.h>
 #include <qstringview.h>
 #include <qtclasshelpermacros.h>
@@ -224,12 +225,17 @@ public:
 
 class GuardedEmitBlocker {
 public:
-	explicit GuardedEmitBlocker(bool* var): var(var) { *this->var = true; }
-	~GuardedEmitBlocker() { *this->var = false; }
+	explicit GuardedEmitBlocker(bool* var, QObject* owner): var(var), owner(owner) {
+		*this->var = true;
+	}
+	~GuardedEmitBlocker() {
+		if (this->owner) *this->var = false;
+	}
 	Q_DISABLE_COPY_MOVE(GuardedEmitBlocker);
 
 private:
 	bool* var;
+	QPointer<QObject> owner;
 };
 
 template <auto signal>
@@ -248,7 +254,7 @@ public:
 		if (!this->blocked) (obj->*signal)();
 	}
 
-	GuardedEmitBlocker block() { return GuardedEmitBlocker(&this->blocked); }
+	GuardedEmitBlocker block(Class* obj) { return GuardedEmitBlocker(&this->blocked, obj); }
 };
 
 template <auto methodPtr>

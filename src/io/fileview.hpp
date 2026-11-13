@@ -16,6 +16,7 @@
 #include <qstringview.h>
 #include <qtclasshelpermacros.h>
 #include <qtmetamacros.h>
+#include <qtypes.h>
 
 #include "../core/doc.hpp"
 #include "../core/util.hpp"
@@ -75,7 +76,7 @@ struct FileViewState {
 
 class FileView;
 
-class FileViewOperation
+class FileViewOperation // NOLINT(misc-multiple-inheritance)
     : public QObject
     , public QRunnable {
 	Q_OBJECT;
@@ -335,10 +336,12 @@ public:
 
 signals:
 	/// Emitted if the file was loaded successfully.
+	/// Superseded loads do not emit completion signals.
 	void loaded();
 	/// Emitted if the file failed to load.
 	void loadFailed(qs::io::FileViewError::Enum error);
 	/// Emitted if the file was saved successfully.
+	/// Writes finish before replacement I/O; nested completions may arrive before enclosing ones.
 	void saved();
 	/// Emitted if the file failed to save.
 	void saveFailed(qs::io::FileViewError::Enum error);
@@ -370,9 +373,11 @@ private:
 	void loadAsync(bool doStringConversion);
 	void saveAsync();
 	void cancelAsync();
+	void finishOperation();
+	void finishState(FileViewState& state, bool reader);
 	void loadSync();
 	void saveSync();
-	void updateState(FileViewState& newState);
+	quint64 updateState(FileViewState& newState);
 	void updatePath();
 	void updateWatchedFiles();
 	void onWatchedFileChanged();
@@ -384,6 +389,7 @@ private:
 	[[nodiscard]] const FileViewData& writeCmpData() const;
 
 	FileViewState state;
+	quint64 stateGeneration = 0;
 	FileViewData writeData;
 	FileViewOperation* liveOperation = nullptr;
 	QString pathInFlight;
@@ -405,13 +411,7 @@ private:
 	GuardedEmitter<&FileView::internalDataChanged> dataChangedEmitter;
 	void emitDataChanged();
 
-	DECLARE_PRIVATE_MEMBER(
-	    FileView,
-	    isLoadedOrAsync,
-	    setLoadedOrAsync,
-	    mLoadedOrAsync,
-	    loadedOrAsyncChanged
-	);
+	DECLARE_MEMBER_WITH_GET(FileView, isLoadedOrAsync, mLoadedOrAsync, loadedOrAsyncChanged);
 
 public:
 	DECLARE_MEMBER_WITH_GET(FileView, shouldPreload, mPreload, preloadChanged);

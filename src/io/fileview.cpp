@@ -13,6 +13,7 @@
 #include <qnamespace.h>
 #include <qobject.h>
 #include <qobjectdefs.h>
+#include <qpointer.h>
 #include <qqmlinfo.h>
 #include <qsavefile.h>
 #include <qscopedpointer.h>
@@ -69,10 +70,7 @@ FileViewOperation::FileViewOperation(FileView* owner): owner(owner) {
 	this->blockMutex.lock();
 }
 
-void FileViewOperation::block() {
-	// block until a lock can be acauired, then immediately drop it
-	auto unused = QMutexLocker(&this->blockMutex);
-}
+void FileViewOperation::block() { auto unused = QMutexLocker(&this->blockMutex); }
 
 void FileViewOperation::tryCancel() { this->shouldCancel.storeRelease(true); }
 
@@ -83,8 +81,7 @@ void FileViewOperation::finishRun() {
 
 void FileViewOperation::finished() {
 	emit this->done();
-	// Delete happens on the main thread, after done(), meaning no operation accesses
-	// will be a UAF.
+	// Destroy on the owning thread, not the pool thread.
 	delete this;
 }
 
@@ -298,9 +295,11 @@ FileView::~FileView() {
 }
 
 void FileView::loadAsync(bool doStringConversion) {
-	// Writes update via operationFinished, making a read both invalid and outdated.
 	if (!this->liveOperation || this->pathInFlight != this->targetPath) {
+		auto view = QPointer(this);
 		this->cancelAsync();
+		if (!view) return;
+
 		this->pathInFlight = this->targetPath;
 
 		if (this->targetPath.isEmpty()) {
@@ -323,10 +322,12 @@ void FileView::saveAsync() {
 		qmlWarning(this) << "Cannot write file, as no path has been specified.";
 		this->writeData = FileViewData();
 	} else {
-		// cancel will blank the data if waiting
+		// Completion callbacks can overwrite writeData while a prior write is awaited.
 		auto data = this->writeData;
 
+		auto view = QPointer(this);
 		this->cancelAsync();
+		if (!view) return;
 
 		qCDebug(logFileView) << "Starting async save for" << this << "of" << this->targetPath;
 		auto* writer = new FileViewWriter(this, this->bAtomicWrites);
@@ -340,18 +341,20 @@ void FileView::saveAsync() {
 }
 
 void FileView::cancelAsync() {
-	if (!this->liveOperation) return;
-	this->liveOperation->tryCancel();
+	auto view = QPointer(this);
+	while (this->liveOperation) {
+		if (this->liveReader()) {
+			qCDebug(logFileView) << "Disowning async read for" << this;
+			this->liveOperation->tryCancel();
+			QObject::disconnect(this->liveOperation, nullptr, this, nullptr);
+			this->liveOperation = nullptr;
+			return;
+		}
 
-	if (this->liveReader()) {
-		qCDebug(logFileView) << "Disowning async read for" << this;
-		QObject::disconnect(this->liveOperation, nullptr, this, nullptr);
-		this->liveOperation = nullptr;
-	} else if (this->liveWriter()) {
-		// We don't want to start a read or write operation in the middle of a write.
-		// This really shouldn't block but it isn't worth fixing for now.
+		// Writes must complete before another operation can use the same path.
 		qCDebug(logFileView) << "Blocking on write for" << this;
 		this->waitForJob();
+		if (!view) return;
 	}
 }
 
@@ -362,40 +365,45 @@ void FileView::operationFinished() {
 	}
 
 	qCDebug(logFileView) << "Async operation finished for" << this;
-	this->writeData = FileViewData();
-	this->updateState(this->liveOperation->state);
+	this->finishOperation();
+}
 
-	if (this->liveReader()) {
-		if (this->state.error) emit this->loadFailed(this->state.error);
+void FileView::finishOperation() {
+	// Detach before callbacks can start a new operation or process the old one's queued deletion.
+	auto* operation = std::exchange(this->liveOperation, nullptr);
+	auto reader = dynamic_cast<FileViewReader*>(operation) != nullptr;
+	auto state = std::move(operation->state);
+	this->writeData = FileViewData();
+	this->finishState(state, reader);
+}
+
+void FileView::finishState(FileViewState& state, bool reader) {
+	auto error = state.error;
+	auto path = state.path;
+	auto view = QPointer(this);
+	auto generation = this->updateState(state);
+	if (!view) return;
+
+	if (reader) {
+		if (generation != this->stateGeneration || path != this->targetPath) return;
+
+		if (error) emit this->loadFailed(error);
 		else emit this->loaded();
 	} else {
-		if (this->state.error) emit this->saveFailed(this->state.error);
+		if (error) emit this->saveFailed(error);
 		else emit this->saved();
 	}
-
-	this->liveOperation = nullptr;
 }
 
 void FileView::reload() { this->updatePath(); }
 
 bool FileView::waitForJob() {
-	if (this->liveOperation != nullptr) {
-		QObject::disconnect(this->liveOperation, nullptr, this, nullptr);
-		this->liveOperation->block();
-		this->writeData = FileViewData();
-		this->updateState(this->liveOperation->state);
+	if (!this->liveOperation) return false;
 
-		if (this->liveReader()) {
-			if (this->state.error) emit this->loadFailed(this->state.error);
-			else emit this->loaded();
-		} else {
-			if (this->state.error) emit this->saveFailed(this->state.error);
-			else emit this->saved();
-		}
-
-		this->liveOperation = nullptr;
-		return true;
-	} else return false;
+	QObject::disconnect(this->liveOperation, nullptr, this, nullptr);
+	this->liveOperation->block();
+	this->finishOperation();
+	return true;
 }
 
 void FileView::loadSync() {
@@ -406,10 +414,7 @@ void FileView::loadSync() {
 		auto state = FileViewState(this->targetPath);
 		state.printErrors = this->bPrintErrors;
 		FileViewReader::read(this, state, false);
-		this->updateState(state);
-
-		if (this->state.error) emit this->loadFailed(this->state.error);
-		else emit this->loaded();
+		this->finishState(state, true);
 	}
 }
 
@@ -418,29 +423,29 @@ void FileView::saveSync() {
 		qmlWarning(this) << "Cannot write file, as no path has been specified.";
 		this->writeData = FileViewData();
 	} else {
-		// Both reads and writes will be outdated.
-		if (this->liveOperation) this->cancelAsync();
+		auto data = this->writeData;
+		auto view = QPointer(this);
+		this->cancelAsync();
+		if (!view) return;
 
 		auto state = FileViewState(this->targetPath);
-		state.data = this->writeData;
+		state.data = std::move(data);
 		state.printErrors = this->bPrintErrors;
 		FileViewWriter::write(this, state, this->bAtomicWrites);
 		this->writeData = FileViewData();
-		this->updateState(state);
-
-		if (this->state.error) emit this->saveFailed(this->state.error);
-		else emit this->saved();
+		this->finishState(state, false);
 	}
 }
 
-void FileView::updateState(FileViewState& newState) {
-	DEFINE_DROP_EMIT_IF(newState.path != this->state.path, this, pathChanged);
-	// assume if the path was changed the data also changed
+quint64 FileView::updateState(FileViewState& newState) {
+	auto generation = ++this->stateGeneration;
+	auto pathChanged = newState.path != this->state.path;
 	auto dataChanged = pathChanged || newState.data != this->state.data;
-	// DEFINE_DROP_EMIT_IF(newState.exists != this->state.exists, this, existsChanged);
 
 	this->mPrepared = true;
-	auto loadedChanged = this->setLoadedOrAsync(!newState.path.isEmpty() && newState.exists);
+	auto loaded = !newState.path.isEmpty() && newState.exists;
+	auto loadedChanged = loaded != this->mLoadedOrAsync;
+	this->mLoadedOrAsync = loaded;
 
 	this->state.path = std::move(newState.path);
 
@@ -451,13 +456,19 @@ void FileView::updateState(FileViewState& newState) {
 	this->state.exists = newState.exists;
 	this->state.error = newState.error;
 
-	DropEmitter::call(
-	    pathChanged,
-	    // existsChanged,
-	    loadedChanged
-	);
+	auto view = QPointer(this);
+	if (pathChanged) {
+		emit this->pathChanged();
+		if (!view || generation != this->stateGeneration) return generation;
+	}
+
+	if (loadedChanged) {
+		emit this->loadedOrAsyncChanged();
+		if (!view || generation != this->stateGeneration) return generation;
+	}
 
 	if (dataChanged) this->emitDataChanged();
+	return generation;
 }
 
 QString FileView::path() const { return this->state.path; }
@@ -466,17 +477,16 @@ void FileView::setPath(const QString& path) {
 	auto p = path.startsWith("file://") ? path.sliced(7) : path;
 	if (p == this->targetPath) return;
 
-	if (this->liveWriter()) {
-		this->waitForJob();
-	} else {
-		this->cancelAsync();
-	}
+	auto view = QPointer(this);
+	this->cancelAsync();
+	if (!view) return;
 
 	this->targetPath = p;
 	this->updatePath();
 }
 
 void FileView::updatePath() {
+	auto view = QPointer(this);
 	this->mPrepared = false;
 
 	if (this->targetPath.isEmpty()) {
@@ -488,7 +498,7 @@ void FileView::updatePath() {
 		this->emitDataChanged();
 	}
 
-	this->updateWatchedFiles();
+	if (view) this->updateWatchedFiles();
 }
 
 void FileView::updateWatchedFiles() {
@@ -539,7 +549,6 @@ void FileView::onWatchedFileChanged() {
 
 void FileView::onWatchedDirectoryChanged() {
 	if (!this->watcher->files().contains(this->targetPath) && QFileInfo(this->targetPath).exists()) {
-		// the file was just created
 		this->watcher->addPath(this->targetPath);
 		emit this->fileChanged();
 	}
@@ -562,24 +571,28 @@ const FileViewData& FileView::writeCmpData() const {
 }
 
 QByteArray FileView::data() {
-	auto guard = this->dataChangedEmitter.block();
+	auto view = QPointer(this);
+	auto guard = this->dataChangedEmitter.block(this);
 
 	if (!this->mPrepared) {
 		if (this->shouldBlockRead()) this->loadSync();
 		else this->loadAsync(false);
 	}
 
+	if (!view) return {};
 	return this->state.data;
 }
 
 QString FileView::text() {
-	auto guard = this->textChangedEmitter.block();
+	auto view = QPointer(this);
+	auto guard = this->textChangedEmitter.block(this);
 
 	if (!this->mPrepared) {
 		if (this->shouldBlockRead()) this->loadSync();
 		else this->loadAsync(true);
 	}
 
+	if (!view) return {};
 	return this->state.data;
 }
 
@@ -600,53 +613,64 @@ void FileView::setText(const QString& text) {
 }
 
 void FileView::emitDataChanged() {
+	auto view = QPointer(this);
 	this->dataChangedEmitter.call(this);
+	if (!view) return;
+
 	this->textChangedEmitter.call(this);
+	if (!view) return;
+
 	emit this->dataChanged();
+	if (!view) return;
+
 	emit this->textChanged();
 }
 
-DEFINE_MEMBER_GETSET(FileView, isLoadedOrAsync, setLoadedOrAsync);
+DEFINE_MEMBER_GET(FileView, isLoadedOrAsync);
 DEFINE_MEMBER_GET(FileView, shouldPreload);
 DEFINE_MEMBER_GET(FileView, blockLoading);
 DEFINE_MEMBER_GET(FileView, blockAllReads);
 
 void FileView::setPreload(bool preload) {
-	if (preload != this->mPreload) {
-		this->mPreload = preload;
-		emit this->preloadChanged();
+	if (preload == this->mPreload) return;
+	this->mPreload = preload;
+	auto view = QPointer(this);
+	emit this->preloadChanged();
+	if (!view) return;
 
-		if (preload) this->emitDataChanged();
+	if (preload) this->emitDataChanged();
+	if (!view) return;
 
-		if (!this->mPrepared && this->mPreload) {
-			this->loadAsync(false);
-		}
+	if (!this->mPrepared && this->mPreload) {
+		this->loadAsync(false);
 	}
 }
 
 void FileView::setBlockLoading(bool blockLoading) {
-	if (blockLoading != this->mBlockLoading) {
-		auto wasBlocking = this->shouldBlockRead();
+	if (blockLoading == this->mBlockLoading) return;
+	auto wasBlocking = this->shouldBlockRead();
 
-		this->mBlockLoading = blockLoading;
-		emit this->blockLoadingChanged();
+	this->mBlockLoading = blockLoading;
+	auto view = QPointer(this);
+	emit this->blockLoadingChanged();
+	if (!view) return;
 
-		if (!wasBlocking && this->shouldBlockRead()) {
-			this->emitDataChanged();
-		}
+	if (!wasBlocking && this->shouldBlockRead()) {
+		this->emitDataChanged();
 	}
 }
 
 void FileView::setBlockAllReads(bool blockAllReads) {
-	if (blockAllReads != this->mBlockAllReads) {
-		auto wasBlocking = this->shouldBlockRead();
+	if (blockAllReads == this->mBlockAllReads) return;
+	auto wasBlocking = this->shouldBlockRead();
 
-		this->mBlockAllReads = blockAllReads;
-		emit this->blockAllReadsChanged();
+	this->mBlockAllReads = blockAllReads;
+	auto view = QPointer(this);
+	emit this->blockAllReadsChanged();
+	if (!view) return;
 
-		if (!wasBlocking && this->shouldBlockRead()) {
-			this->emitDataChanged();
-		}
+	if (!wasBlocking && this->shouldBlockRead()) {
+		this->emitDataChanged();
 	}
 }
 

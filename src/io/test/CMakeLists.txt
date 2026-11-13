@@ -6,3 +6,4 @@ endfunction()
 
 qs_test(datastream datastream.cpp ../datastream.cpp)
 qs_test(process process.cpp ../process.cpp ../datastream.cpp ../processcore.cpp)
+qs_test(fileview fileview.cpp ../fileview.cpp ../processcore.cpp)
