@@ -94,6 +94,7 @@ private slots:
 
 private:
 	void postReload();
+	void settle() const;
 	void updateIncubationMode();
 	QVector<QQuickWindow*> trackedWindows;
 	bool incubationControllersLocked = false;

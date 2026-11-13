@@ -1,10 +1,13 @@
 #include "generation.hpp"
+#include <chrono>
 #include <utility>
 
+#include <qbytearray.h>
 #include <qcontainerfwd.h>
 #include <qcoreapplication.h>
 #include <qdebug.h>
 #include <qdir.h>
+#include <qfile.h>
 #include <qfileinfo.h>
 #include <qfilesystemwatcher.h>
 #include <qhash.h>
@@ -18,7 +21,19 @@
 #include <qqmlerror.h>
 #include <qqmlincubator.h>
 #include <qquickwindow.h>
+#include <qsystemdetection.h>
+#include <qthreadpool.h>
+#include <qtimer.h>
 #include <qtmetamacros.h>
+#include <qtypes.h>
+
+#ifdef __GLIBC__
+#include <malloc.h>
+#endif
+
+#ifdef Q_OS_LINUX
+#include <sys/mman.h>
+#endif
 
 #include "iconimageprovider.hpp"
 #include "imageprovider.hpp"
@@ -34,6 +49,51 @@ QS_LOGGING_CATEGORY(logScene, "scene");
 }
 
 static QHash<const QQmlEngine*, EngineGeneration*> g_generations; // NOLINT
+
+namespace {
+
+constexpr auto SETTLE_DELAY = std::chrono::seconds(10);
+
+// Startup runs the host executable and LLVM, then leaves most of their pages untouched.
+bool startupOnly(const QByteArray& path, const QByteArray& host) {
+	return path == host || path.contains("/libLLVM");
+}
+
+// Unmaps clean file pages, which the page cache maps back on the next access. A mapping with
+// anonymous pages holds relocated data that only this process has.
+void dropStartupPages() {
+#ifdef Q_OS_LINUX
+	auto maps = QFile("/proc/self/smaps");
+	if (!maps.open(QFile::ReadOnly)) return;
+
+	const auto host = QFile::symLinkTarget("/proc/self/exe").toLocal8Bit();
+	quintptr start = 0;
+	quintptr end = 0;
+	auto candidate = false;
+
+	for (const auto& entry: maps.readAll().split('\n')) {
+		const auto line = entry.trimmed();
+		const auto fields = line.split(' ');
+
+		if (!line.contains(": ")) {
+			const auto range = fields.value(0).split('-');
+			const auto perms = fields.value(1);
+			start = range.value(0).toULongLong(nullptr, 16);
+			end = range.value(1).toULongLong(nullptr, 16);
+			candidate = perms.size() == 4 && perms.at(1) != 'w' && startupOnly(fields.last(), host);
+			continue;
+		}
+
+		if (!candidate || !line.startsWith("Anonymous:")) continue;
+		candidate = false;
+		if (line.split(':').value(1).trimmed() != "0 kB") continue;
+
+		madvise(reinterpret_cast<void*>(start), end - start, MADV_DONTNEED); // NOLINT
+	}
+#endif
+}
+
+} // namespace
 
 EngineGeneration::EngineGeneration(const QDir& rootPath, QmlScanner scanner, QString vfsPath)
     : rootPath(rootPath)
@@ -183,6 +243,20 @@ void EngineGeneration::postReload() {
 
 	emit this->firePostReload();
 	QObject::disconnect(this, &EngineGeneration::firePostReload, nullptr, nullptr);
+
+	QTimer::singleShot(SETTLE_DELAY, this, &EngineGeneration::settle);
+}
+
+// Loading leaves garbage and compiled documents the engine no longer uses.
+void EngineGeneration::settle() const {
+	if (this->engine == nullptr) return;
+
+	this->engine->collectGarbage();
+	this->engine->trimComponentCache();
+#ifdef __GLIBC__
+	malloc_trim(0);
+#endif
+	QThreadPool::globalInstance()->start(&dropStartupPages);
 }
 
 void EngineGeneration::setWatchingFiles(bool watching) {

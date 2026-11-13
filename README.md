@@ -86,6 +86,11 @@ requested image sizes and delays creating the preprocessing engine until it
 is needed. On glibc, startup sets the malloc mmap and trim thresholds unless
 they have been configured through the environment.
 
+Ten seconds after a config loads, the runtime collects JavaScript garbage,
+drops unused compiled components and returns freed heap pages to the system.
+It also unmaps the resident pages of the host executable and of LLVM, which
+startup touched and which come back from the page cache if they are needed.
+
 ## Rendering
 
 Add `//@ pragma RenderControl` for offscreen rendering with partial damage
@@ -94,7 +99,13 @@ in the default build.
 
 Each window gets a render thread and graphics device. To render on the GUI
 thread, set `QS_RENDER_THREAD=0`. Hiding a window releases its surface buffers.
+Its thread and device stay for the next window to show, one pair at most.
 Windows with `inputOnly` use a transparent pixel scaled to the window size.
+
+A window that has not drawn for three seconds keeps one buffer and frees its
+render targets and depth buffer. An `inputOnly` window frees its scene and
+device after the same time. Two seconds later the device allocates and frees a
+small texture, which is when Mesa drops the buffers it cached from those frees.
 
 On OpenGL a frame redraws only its damaged part. Set `QS_NO_PARTIAL_REPAINT=1`
 to redraw whole frames.

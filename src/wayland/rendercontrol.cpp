@@ -67,6 +67,8 @@ namespace {
 QS_LOGGING_CATEGORY(logRenderControl, "quickshell.wayland.rendercontrol", QtWarningMsg);
 
 constexpr qsizetype MAX_BUFFERS = 3;
+// Longer than a clock's tick, so its window keeps the buffers it repaints into.
+constexpr auto TRIM_DELAY = std::chrono::seconds(3);
 quint64 FRAME_SERIAL = 0; // NOLINT
 
 QS_LOGGING_CATEGORY(logFrame, "quickshell.wayland.rendercontrol.frame", QtWarningMsg);
@@ -213,9 +215,21 @@ bool SurfaceBufferPool::trim() {
 	const auto idle = [this](const auto& buffer) {
 		return buffer.get() != this->current && !buffer->busy;
 	};
-	const auto dropped = std::erase_if(this->buffers, idle) != 0;
-	if (this->buffers.empty()) this->control->releaseDepthStencil(this->depthStencil);
-	return dropped;
+	auto released = std::erase_if(this->buffers, idle) != 0;
+
+	// prepare() builds these again; the pixels and their stale region stay with the buffer.
+	for (const auto& buffer: this->buffers) {
+		if (!buffer->renderTarget) continue;
+		this->control->releaseBuffer(buffer.get());
+		released = true;
+	}
+
+	if (this->depthStencil) {
+		this->control->releaseDepthStencil(this->depthStencil);
+		released = true;
+	}
+
+	return released;
 }
 
 bool SurfaceBufferPool::available(QSize size, bool alpha) const {
@@ -325,7 +339,7 @@ void SurfaceBufferPool::drawn(SurfaceBuffer* buffer, const std::optional<QRegion
 
 WaylandRenderControl::WaylandRenderControl(): pool(this) {
 	this->trimTimer.setSingleShot(true);
-	this->trimTimer.setInterval(std::chrono::seconds(1));
+	this->trimTimer.setInterval(TRIM_DELAY);
 
 	// clang-format off
 	QObject::connect(this, &QQuickRenderControl::renderRequested, this, &WaylandRenderControl::onRenderRequested);
@@ -350,8 +364,16 @@ void WaylandRenderControl::releaseScene() {
 		this->prepareThread(this->thread());
 	});
 	this->pool.clear();
+	const auto lost = this->rhi->isDeviceLost();
 	this->rhi = nullptr;
-	this->renderThread.reset();
+
+	if (lost) {
+		this->renderThread.reset();
+		return;
+	}
+
+	this->renderThread->invoke([this] { this->renderThread->freeReleased(); });
+	RenderThread::recycle(std::move(this->renderThread));
 }
 
 void WaylandRenderControl::releaseBuffer(SurfaceBuffer* buffer) {
@@ -412,20 +434,15 @@ void WaylandRenderControl::trimBuffers() {
 		this->trimTimer.start();
 		return;
 	}
+	// renderFrame() builds the scene again once the window draws.
+	if (this->pixelAttached) {
+		this->releaseScene();
+		return;
+	}
 	if (!this->pool.trim()) return;
 
-	// QRhiGles2 frees released GL objects in beginOffscreenFrame(), QRhiVulkan only those of
-	// one frame slot there and the rest in finish(); see executeDeferredReleases().
-	this->renderThread->invoke([this] {
-		if (this->rhi->backend() == QRhi::Vulkan) {
-			this->rhi->finish();
-			return;
-		}
-
-		QRhiCommandBuffer* commands = nullptr;
-		if (this->rhi->beginOffscreenFrame(&commands) != QRhi::FrameOpSuccess) return;
-		this->rhi->endOffscreenFrame();
-	});
+	this->renderThread->invoke([this] { this->renderThread->freeReleased(); });
+	this->renderThread->sweepLater();
 }
 
 bool WaylandRenderControl::eventFilter(QObject* watched, QEvent* event) {
@@ -477,7 +494,7 @@ bool WaylandRenderControl::initializeScene() {
 	}
 
 	auto* manager = buffer::WlBufferManager::instance();
-	this->renderThread = std::make_unique<RenderThread>(window);
+	this->renderThread = RenderThread::acquire(window);
 	this->rhi = this->renderThread->rhi();
 	auto initialized = false;
 	if (this->rhi) {
