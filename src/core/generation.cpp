@@ -247,12 +247,11 @@ void EngineGeneration::postReload() {
 	QTimer::singleShot(SETTLE_DELAY, this, &EngineGeneration::settle);
 }
 
-// Loading leaves garbage and compiled documents the engine no longer uses.
+// Loading leaves garbage the engine no longer uses.
 void EngineGeneration::settle() const {
 	if (this->engine == nullptr) return;
 
 	this->engine->collectGarbage();
-	this->engine->trimComponentCache();
 #ifdef __GLIBC__
 	malloc_trim(0);
 #endif
