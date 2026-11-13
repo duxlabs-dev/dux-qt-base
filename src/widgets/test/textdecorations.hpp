@@ -11,4 +11,6 @@ private slots:
 	static void deltasAreMinimal();
 	static void formatsLeaveTextAlone();
 	static void textKeepsRawCharacters();
+	static void replacementIsOneEdit();
+	static void replacementClampsUtf16Ranges();
 };

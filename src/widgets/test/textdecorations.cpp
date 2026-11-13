@@ -143,4 +143,51 @@ void TestTextDecorations::textKeepsRawCharacters() {
 	QCOMPARE(editor.decorations.text(5, 2), QString());
 }
 
+void TestTextDecorations::replacementIsOneEdit() {
+	auto editor = Editor();
+	auto* document = editor.text();
+	document->setPlainText(QStringLiteral("c\nb\na\nd\ne"));
+	auto spy = QSignalSpy(&editor.decorations, &TextDecorations::contentsChanged);
+	auto positions = QList<qint32>();
+	QObject::connect(
+	    &editor.decorations,
+	    &TextDecorations::contentsChanged,
+	    &editor.decorations,
+	    [&]() { positions.append(editor.decorations.undoSteps()); }
+	);
+
+	editor.decorations.replace(0, 5, QStringLiteral("a\nb\nc"));
+	QCOMPARE(document->toPlainText(), QStringLiteral("a\nb\nc\nd\ne"));
+	QCOMPARE(spy.count(), 1);
+	QCOMPARE(spy.at(0), (QVariantList {0, 5, 5}));
+
+	document->undo();
+	QCOMPARE(document->toPlainText(), QStringLiteral("c\nb\na\nd\ne"));
+	QCOMPARE(spy.count(), 2);
+	QVERIFY(!document->isUndoAvailable());
+	document->redo();
+	QCOMPARE(document->toPlainText(), QStringLiteral("a\nb\nc\nd\ne"));
+	QCOMPARE(spy.count(), 3);
+	QVERIFY(positions.at(0) > 0);
+	QCOMPARE(positions.at(1), 0);
+	QCOMPARE(positions.at(2), positions.at(0));
+}
+
+void TestTextDecorations::replacementClampsUtf16Ranges() {
+	auto detached = TextDecorations();
+	detached.replace(0, 10, QStringLiteral("ignored"));
+
+	auto editor = Editor();
+	auto* document = editor.text();
+	document->setPlainText(QStringLiteral("a\U0001f600b"));
+	editor.decorations.replace(1, 3, QStringLiteral("X"));
+	QCOMPARE(document->toPlainText(), QStringLiteral("aXb"));
+	editor.decorations.replace(-5, 1, QString());
+	QCOMPARE(document->toPlainText(), QStringLiteral("Xb"));
+	editor.decorations.replace(100, 200, QStringLiteral("\nc"));
+	QCOMPARE(document->toPlainText(), QStringLiteral("Xb\nc"));
+	editor.decorations.replace(1, -1, QStringLiteral("!"));
+	QCOMPARE(document->toPlainText(), QStringLiteral("X!b\nc"));
+}
+
 QTEST_MAIN(TestTextDecorations);

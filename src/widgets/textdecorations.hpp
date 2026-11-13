@@ -65,6 +65,10 @@ public:
 	/// The text in `[start, end)` as stored: line breaks as `\n`, while no-break spaces and line separators
 	/// stay as they are (@@QtQuick.TextEdit.getText() turns them into spaces and line breaks).
 	Q_INVOKABLE [[nodiscard]] QString text(qint32 start, qint32 end) const;
+	/// Replaces `[start, end)` in UTF-16 units as one undo step and one edit delta.
+	Q_INVOKABLE void replace(qint32 start, qint32 end, const QString& text);
+	/// The current Qt undo stack position. Read it in @@contentsChanged(s) to identify an edit.
+	Q_INVOKABLE [[nodiscard]] qint32 undoSteps() const;
 	// clang-format on
 
 	[[nodiscard]] QQuickTextDocument* document() const { return this->mDocument; }

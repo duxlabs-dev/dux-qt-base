@@ -201,6 +201,26 @@ void TextDecorations::setPalette(const QVariantList& palette) {
 	emit this->paletteChanged();
 }
 
+void TextDecorations::replace(qint32 start, qint32 end, const QString& text) {
+	if (!this->mTextDocument) return;
+
+	auto length = this->textLength();
+	start = std::clamp(start, 0, length);
+	end = std::clamp(end, start, length);
+	if (start == end && text.isEmpty()) return;
+
+	auto cursor = QTextCursor(this->mTextDocument);
+	cursor.setPosition(start);
+	cursor.setPosition(end, QTextCursor::KeepAnchor);
+	cursor.beginEditBlock();
+	cursor.insertText(text);
+	cursor.endEditBlock();
+}
+
+qint32 TextDecorations::undoSteps() const {
+	return this->mTextDocument ? this->mTextDocument->availableUndoSteps() : 0;
+}
+
 void TextDecorations::setSpellColor(const QColor& color) {
 	if (color == this->mSpellColor) return;
 	this->mSpellColor = color;
