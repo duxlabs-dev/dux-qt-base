@@ -147,8 +147,19 @@ void ProxyWindowBase::ensureQWindow() {
 	this->mSurfaceFormat = format;
 
 	if (this->window != nullptr && this->window->requestedFormat() == format) return;
-	delete this->window;
-	this->window = nullptr; // createQQuickWindow may indirectly reference this->window
+
+	// Destroy the old window through the deferred-delete path (as deleteWindow() does)
+	// instead of deleting it synchronously: an exposed window's scene graph may still
+	// hold references to its resources (including entries in the process-global
+	// QQuickPixmapCache). Deleting it here races the render thread and poisons the
+	// shared cache; a later teardown that shrinks the cache then double-frees
+	// (observed as SIGSEGV in QQuickPixmapCache::shrinkCache ← QQuickWindow dtor).
+	// disownWindow() disconnects, unparents the content item (which stays alive and
+	// is re-parented by completeWindow()), and clears the proxy backlink.
+	if (auto* oldWindow = this->disownWindow(false)) {
+		oldWindow->setVisible(false); // avoid both windows mapping briefly
+		oldWindow->deleteLater();
+	}
 	this->window = this->createQQuickWindow();
 	this->window->setFormat(format);
 
