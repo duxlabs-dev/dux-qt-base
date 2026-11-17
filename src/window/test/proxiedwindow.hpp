@@ -8,4 +8,5 @@ class TestProxiedWindow: public QObject {
 
 private slots:
 	void contextMenuWithoutPositionAndFocusItem();
+	void formatFlipRecreation();
 };
