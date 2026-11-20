@@ -16,6 +16,7 @@
 #include <qcoreapplication.h>
 #include <qcoreevent.h>
 #include <qelapsedtimer.h>
+#include <qguiapplication.h>
 #include <qimage.h>
 #include <qlist.h>
 #include <qlogging.h>
@@ -35,6 +36,7 @@
 #include <qrect.h>
 #include <qregion.h>
 #include <qscopeguard.h>
+#include <qscreen.h>
 #include <qsemaphore.h>
 #include <qsgflatcolormaterial.h>
 #include <qsggeometry.h>
@@ -60,6 +62,7 @@
 #include "buffer/manager.hpp"
 #include "buffer/shm.hpp"
 #include "presentation.hpp"
+#include "racetrace.hpp"
 #include "renderthread.hpp"
 
 namespace qs::wayland::render {
@@ -145,6 +148,25 @@ void install() {
 	if (qEnvironmentVariableIsSet("QS_DISABLE_DMABUF")) {
 		qCInfo(logRenderControl) << "Render control is unavailable with QS_DISABLE_DMABUF.";
 		return;
+	}
+
+	// Trace only; the fix hook lives in initializeScene()/releaseScene().
+	if (qs::wayland::render::raceTrace()) {
+		auto* app = QCoreApplication::instance();
+		QObject::connect(
+			    app,
+			    &QGuiApplication::screenAdded,
+			    app,
+			    [](QScreen* s) { RT_TRACE("screenAdded", s, s->name()); },
+			    Qt::DirectConnection
+		   );
+		QObject::connect(
+			    app,
+			    &QGuiApplication::screenRemoved,
+			    app,
+			    [](QScreen* s) { RT_TRACE("screenRemoved", s, s->name()); },
+			    Qt::DirectConnection
+		    );
 	}
 
 	qs::window::WindowRenderControl::setFactory(&createRenderControl, &usable);
@@ -359,6 +381,7 @@ WaylandRenderControl::~WaylandRenderControl() { this->releaseScene(); }
 
 // initializeScene() builds the scene and its thread again.
 void WaylandRenderControl::releaseScene() {
+	RT_TRACE("releaseScene control", this);
 	if (!this->renderThread || !this->rhi) return;
 
 	this->renderThread->invoke([this] {
@@ -491,6 +514,7 @@ bool WaylandRenderControl::eventFilter(QObject* watched, QEvent* event) {
 
 bool WaylandRenderControl::initializeScene() {
 	auto* window = this->window();
+	RT_TRACE("initializeScene control", this, "window", window);
 
 	// Connect the tracker before QQuickRenderControl::initialize() emits sceneGraphInitialized.
 	auto* base = qobject_cast<QsQuickWindowBase*>(window);
@@ -645,7 +669,9 @@ void WaylandRenderControl::renderFrame() {
 	this->frameInFlight = true;
 	this->frameRequested = false;
 	const auto acknowledge = std::exchange(this->damagePresented, false);
+	RT_TRACE("submit frame control", this, "serial", frame->serial);
 	this->renderThread->submit([this, frame, acknowledge] {
+		RT_TRACE("frame functor begin control", this, "serial", frame->serial);
 		QElapsedTimer timer;
 		timer.start();
 		if (acknowledge && this->tracker) this->tracker->presented();
@@ -665,6 +691,7 @@ void WaylandRenderControl::renderFrame() {
 		    },
 		    Qt::QueuedConnection
 		);
+		RT_TRACE("frame functor end control", this, "serial", frame->serial);
 	});
 	this->synchronized.acquire();
 }

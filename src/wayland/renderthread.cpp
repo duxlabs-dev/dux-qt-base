@@ -5,6 +5,8 @@
 #include <memory>
 #include <utility>
 
+#include "racetrace.hpp"
+
 #include <private/qvulkandefaultinstance_p.h>
 #include <qabstractanimation.h>
 #include <qalgorithms.h>
@@ -62,6 +64,7 @@ bool IDLE_CLOSED = false; // NOLINT
 
 // newFallbackSurface() creates a context to resolve the format, so resolve each one once.
 QOffscreenSurface* createFallbackSurface(const QSurfaceFormat& format) {
+	RT_TRACE("createFallbackSurface");
 	static auto* resolved = new QList<std::pair<QSurfaceFormat, QSurfaceFormat>>(); // NOLINT
 	const auto requested = [&format](const auto& entry) { return entry.first == format; };
 	const auto found = std::ranges::find_if(*resolved, requested);
@@ -87,6 +90,8 @@ void RenderThread::prepareWindow(QQuickWindow* window) {
 }
 
 std::unique_ptr<RenderThread> RenderThread::acquire(QQuickWindow* window) {
+	RT_TRACE("acquire window", window);
+
 	static auto connected = false;
 	if (!std::exchange(connected, true)) {
 		auto* app = QCoreApplication::instance();
@@ -109,6 +114,8 @@ std::unique_ptr<RenderThread> RenderThread::acquire(QQuickWindow* window) {
 }
 
 void RenderThread::recycle(std::unique_ptr<RenderThread> thread) {
+	RT_TRACE("recycle", thread.get());
+
 	if (IDLE_CLOSED) return;
 
 	auto& idle = idleThreads();
@@ -157,6 +164,7 @@ void RenderThread::sweep() {
 RenderThread::RenderThread(QQuickWindow* window)
     : format(window->requestedFormat())
     , threaded(qEnvironmentVariable("QS_RENDER_THREAD") != "0") {
+	RT_TRACE("ctor window", window);
 	const auto vulkan = QQuickWindow::graphicsApi() == QSGRendererInterface::Vulkan;
 	RenderThread::prepareWindow(window);
 
@@ -180,6 +188,8 @@ RenderThread::RenderThread(QQuickWindow* window)
 		else this->device.reset(createGlesDevice(this->format, this->surface.get()));
 		if (!vulkan && this->device) this->createParking();
 
+		RT_TRACE("device created", this->device.get());
+
 		// Qt's default driver steps this thread's animators on a 16 ms timer, not per frame.
 		if (!this->threaded) return;
 		this->animators = std::make_unique<QAnimationDriver>();
@@ -201,6 +211,7 @@ void RenderThread::createParking() {
 }
 
 RenderThread::~RenderThread() {
+	RT_TRACE("dtor");
 	this->invoke([this] {
 		this->animators.reset();
 		this->parking.reset();
