@@ -142,6 +142,12 @@ QRegion windowRegion(const QRegion& pixels, qreal scale) {
 
 qs::window::WindowRenderControl* createRenderControl() { return new WaylandRenderControl(); }
 
+// Lets the screen-removal handler drain every live control's render thread.
+QList<WaylandRenderControl*>& liveControls() {
+	static auto* controls = new QList<WaylandRenderControl*>(); // NOLINT
+	return *controls;
+}
+
 bool usable() { return buffer::WlBufferManager::instance()->initWithoutWindow(); }
 
 void install() {
@@ -150,24 +156,30 @@ void install() {
 		return;
 	}
 
-	// Trace only; the fix hook lives in initializeScene()/releaseScene().
+	auto* guiApp = static_cast<QGuiApplication*>(QCoreApplication::instance());
+
 	if (qs::wayland::render::raceTrace()) {
-		auto* app = QCoreApplication::instance();
 		QObject::connect(
-			    app,
+			    guiApp,
 			    &QGuiApplication::screenAdded,
-			    app,
+			    guiApp,
 			    [](QScreen* s) { RT_TRACE("screenAdded", s, s->name()); },
 			    Qt::DirectConnection
 		   );
-		QObject::connect(
-			    app,
-			    &QGuiApplication::screenRemoved,
-			    app,
-			    [](QScreen* s) { RT_TRACE("screenRemoved", s, s->name()); },
-			    Qt::DirectConnection
-		    );
 	}
+
+	// handleScreenRemoved() deletes the QScreen once direct slots return, while frame
+	// functors may still dereference it mid-run on qs-render (scene sync evaluates QML
+	// bindings holding the screen, e.g. the Screen attached property).
+	QObject::connect(
+		    guiApp,
+		    &QGuiApplication::screenRemoved,
+		    guiApp,
+		    [](QScreen*) {
+			    for (auto* control: liveControls()) control->quiesce();
+		    },
+		    Qt::DirectConnection
+	    );
 
 	qs::window::WindowRenderControl::setFactory(&createRenderControl, &usable);
 }
@@ -362,6 +374,7 @@ void SurfaceBufferPool::drawn(SurfaceBuffer* buffer, const std::optional<QRegion
 }
 
 WaylandRenderControl::WaylandRenderControl(): pool(this) {
+	liveControls().append(this);
 	this->trimTimer.setSingleShot(true);
 	this->trimTimer.setInterval(TRIM_DELAY);
 
@@ -377,7 +390,18 @@ WaylandRenderControl::Frame::~Frame() {
 	if (this->fence != -1) close(this->fence);
 }
 
-WaylandRenderControl::~WaylandRenderControl() { this->releaseScene(); }
+WaylandRenderControl::~WaylandRenderControl() {
+	liveControls().removeOne(this);
+	this->releaseScene();
+}
+
+// GUI thread only. Blocks until every queued or in-flight frame functor has run, so none
+// dereferences state the caller is about to destroy. Functors never block on the GUI thread
+// (they only post finishFrame() back), so this cannot deadlock.
+void WaylandRenderControl::quiesce() {
+	if (!this->renderThread) return;
+	this->renderThread->invoke([] {});
+}
 
 // initializeScene() builds the scene and its thread again.
 void WaylandRenderControl::releaseScene() {

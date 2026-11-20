@@ -125,6 +125,8 @@ public:
 	void onBufferReleased();
 	void releaseBuffer(SurfaceBuffer* buffer);
 	void releaseDepthStencil(std::shared_ptr<QRhiRenderBuffer>& buffer);
+	// GUI thread only. Drains the render thread's queue; see WaylandRenderControl.cpp.
+	void quiesce();
 
 private slots:
 	void scheduleFrame();
