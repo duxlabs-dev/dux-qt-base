@@ -170,12 +170,25 @@ void install() {
 
 	// handleScreenRemoved() deletes the QScreen once direct slots return, while frame
 	// functors may still dereference it mid-run on qs-render (scene sync evaluates QML
-	// bindings holding the screen, e.g. the Screen attached property).
+	// bindings holding the screen, e.g. the Screen attached property). It also queues
+	// its own signal to any object living on a render thread (QWaylandSurface's
+	// screenRemoved slot is an AutoConnection), and those metacalls are only posted
+	// after the drain below; flush them again while the QScreen and its not-yet-deleted
+	// platform screen are still valid (destroyed() fires first in ~QObject).
 	QObject::connect(
 		    guiApp,
 		    &QGuiApplication::screenRemoved,
 		    guiApp,
-		    [](QScreen*) {
+		    [](QScreen* screen) {
+			    QObject::connect(
+			        screen,
+			        &QObject::destroyed,
+			        screen,
+			        [](QObject*) {
+				        for (auto* control: liveControls()) control->quiesce();
+			        },
+			        Qt::DirectConnection
+			    );
 			    for (auto* control: liveControls()) control->quiesce();
 		    },
 		    Qt::DirectConnection
