@@ -6,8 +6,10 @@
 
 #include <libdrm/drm_fourcc.h>
 #include <private/qquickanimatorcontroller_p.h>
+#include <private/qquickrendercontrol_p.h>
 #include <private/qquickwindow_p.h>
 #include <private/qsgrenderer_p.h>
+#include <private/qsgrhisupport_p.h>
 #include <private/qwaylandabstractdecoration_p.h>
 #include <private/qwaylandbuffer_p.h>
 #include <private/qwaylanddisplay_p.h>
@@ -567,6 +569,19 @@ bool WaylandRenderControl::initializeScene() {
 	auto initialized = false;
 	if (this->rhi) {
 		window->setGraphicsDevice(QQuickGraphicsDevice::fromRhi(this->rhi));
+
+		// initRhi() creates the offscreen surface on the calling thread when it isn't set, and
+		// on Wayland that surface is a hidden QWindow + QWaylandWindow/QWaylandSurface which
+		// would take the render thread's affinity; queued events for them then outlive the
+		// objects during teardown (use-after-free). QSGThreadedRenderLoop creates the surface
+		// on the gui thread for exactly this reason. createRhi() imports our graphics device,
+		// so the surface is never used for rendering, only created and destroyed on this thread.
+		auto* controlPrivate = QQuickRenderControlPrivate::get(this);
+		if (!controlPrivate->offscreenSurface) {
+			controlPrivate->offscreenSurface = QSGRhiSupport::instance()->maybeCreateOffscreenSurface(window);
+			RT_TRACE("offscreen surface", controlPrivate->offscreenSurface);
+		}
+
 		this->prepareThread(this->renderThread->thread());
 		this->renderThread->invoke([this, window, manager, &initialized] {
 			initialized = this->initialize();
