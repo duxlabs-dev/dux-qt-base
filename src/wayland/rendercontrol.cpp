@@ -51,6 +51,7 @@
 #include <qtclasshelpermacros.h>
 #include <qtenvironmentvariables.h>
 #include <qtmetamacros.h>
+#include <qthread.h>
 #include <qtypes.h>
 #include <rhi/qrhi.h>
 #include <unistd.h>
@@ -145,7 +146,9 @@ QRegion windowRegion(const QRegion& pixels, qreal scale) {
 qs::window::WindowRenderControl* createRenderControl() { return new WaylandRenderControl(); }
 
 // Lets the screen-removal handler drain every live control's render thread.
+// GUI thread only: registration, teardown, and the quiesce() drains all run there.
 QList<WaylandRenderControl*>& liveControls() {
+	Q_ASSERT(QThread::currentThread() == QCoreApplication::instance()->thread());
 	static auto* controls = new QList<WaylandRenderControl*>(); // NOLINT
 	return *controls;
 }
