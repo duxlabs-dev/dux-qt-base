@@ -1,7 +1,7 @@
 #pragma once
 
-// Temporary instrumentation for the render-thread UAF investigation (QS_RACE_TRACE=1).
-// Logs thread identity at the GUI/render-thread crossings. Remove before merging.
+// QS_RACE_TRACE=1 logs thread identity at the GUI/render-thread crossings.
+// Kept for field post-mortems of the render-thread UAF family; zero-cost when disabled.
 
 #include <qlogging.h>
 #include <qthread.h>
