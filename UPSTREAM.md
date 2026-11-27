@@ -25,6 +25,11 @@ Cherry-picked 2026-11-07, without their changelog hunks:
 - #890 `launch: set the application version so GetServerInformation reports one`
 - #1219 `io/process: let qmllint read qprocess enums`
 
+Cherry-picked 2026-11-27, without their changelog hunks:
+
+- #1421 `hyprland/ipc: expose workspace type` (head `f0bf98c8`)
+- #1422 `hyprland/ipc: expose specialWorkspace on HyprlandMonitor` (head `f7f96b98`)
+
 Reworked rather than cherry-picked:
 
 - #899 `wayland/window: add WaylandWindow attached object for overriding App ID`: its app id code backs `FloatingWindow.appId` instead of a `WaylandWindow` attached type, so the property also works on X11.
