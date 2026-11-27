@@ -991,11 +991,14 @@ int WlDmaBuffer::createRenderFence(QRhi* rhi) const {
 		return -1;
 	}
 
-	// A driver with implicit sync fences the dmabuf until the GPU is done.
+	// An implicitly fenced dmabuf would make the compositor hold its commit a repaint behind others.
 	if (this->planeCount != 0) {
 		const auto& plane = this->planes[0]; // NOLINT
 		pollfd fenced = {.fd = plane.fd, .events = POLLIN, .revents = 0};
-		if (poll(&fenced, 1, 0) == 0) return -1;
+		if (poll(&fenced, 1, 0) == 0) {
+			const auto fence = fcntl(plane.fd, F_DUPFD_CLOEXEC, 0);
+			if (fence != -1) return fence;
+		}
 	}
 
 	rhi->makeThreadLocalNativeContextCurrent();

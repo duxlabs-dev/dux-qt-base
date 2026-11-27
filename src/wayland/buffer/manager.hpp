@@ -90,7 +90,7 @@ public:
 
 	// Must be called from render thread.
 	[[nodiscard]] virtual WlBufferQSGTexture* createQsgTexture(QQuickWindow* window) const = 0;
-	// Returns a sync file, owned by the caller, that signals once the GPU has drawn the frame
+	// Returns a pollable fd, owned by the caller, that reads once the GPU has drawn the frame
 	// rendered into the buffer, or -1 when there is nothing left to wait for. Blocks if no sync
 	// file can be exported. Must be called from render thread, after the frame ends.
 	[[nodiscard]] virtual int createRenderFence(QRhi* rhi) const {
