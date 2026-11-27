@@ -102,6 +102,8 @@ public:
 	HyprlandMonitor* findMonitorByName(const QString& name, bool createIfMissing, qint32 id = -1);
 	HyprlandToplevel* findToplevelByAddress(quint64 address, bool createIfMissing);
 
+	[[nodiscard]] QString eventWorkspaceAddress(const QString& workspace) const;
+
 	// canCreate avoids making ghost workspaces when the connection races
 	void refreshWorkspaces(bool canCreate);
 	void refreshMonitors(bool canCreate);
@@ -144,6 +146,8 @@ private:
 	bool requestingWorkspaces = false;
 	bool requestingToplevels = false;
 	bool monitorsRequested = false;
+	// Hyprland 0.57 names workspaces by address in events, older versions by name
+	bool workspaceAddresses = false;
 
 	ObjectModel<HyprlandMonitor> mMonitors {this};
 	ObjectModel<HyprlandWorkspace> mWorkspaces {this};

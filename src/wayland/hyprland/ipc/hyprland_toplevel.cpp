@@ -62,7 +62,11 @@ void HyprlandToplevel::updateInitial(
     const QString& title,
     const QString& workspaceName
 ) {
-	auto* workspace = this->ipc->findWorkspaceByName(workspaceName, false);
+	auto* workspace = this->ipc->findWorkspaceByName(
+	    workspaceName,
+	    false,
+	    this->ipc->eventWorkspaceAddress(workspaceName)
+	);
 	Qt::beginPropertyUpdateGroup();
 	this->setAddress(address);
 	this->bTitle = title;
@@ -83,8 +87,11 @@ void HyprlandToplevel::updateFromObject(const QVariantMap& object) {
 
 	auto workspaceMap = object.value("workspace").toMap();
 	auto workspaceName = workspaceMap.value("name").toString();
+	auto workspaceAddress = workspaceMap.value("address").toString();
+	if (workspaceAddress.isEmpty())
+		workspaceAddress = QString::number(workspaceMap.value("id").toInt());
 
-	auto* workspace = this->ipc->findWorkspaceByName(workspaceName, true);
+	auto* workspace = this->ipc->findWorkspaceByName(workspaceName, true, workspaceAddress);
 	if (workspace) this->setWorkspace(workspace);
 
 	this->bLastIpcObject = object;

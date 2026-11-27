@@ -349,7 +349,7 @@ void HyprlandIpc::onEvent(HyprlandIpcEvent* event) {
 
 		qCDebug(logHyprlandIpc) << "Workspace created with address" << address << "name" << name;
 
-		auto* workspace = this->findWorkspaceByName(name, false);
+		auto* workspace = this->findWorkspaceByName(name, false, address);
 		auto existed = workspace != nullptr;
 
 		if (workspace == nullptr) {
@@ -405,7 +405,11 @@ void HyprlandIpc::onEvent(HyprlandIpcEvent* event) {
 
 		HyprlandWorkspace* workspace = nullptr;
 		if (workspaceName != "?") { // what the fuck
-			workspace = this->findWorkspaceByName(workspaceName, false);
+			workspace = this->findWorkspaceByName(
+			    workspaceName,
+			    false,
+			    this->eventWorkspaceAddress(workspaceName)
+			);
 		}
 
 		auto* monitor = this->findMonitorByName(name, true);
@@ -508,7 +512,8 @@ void HyprlandIpc::onEvent(HyprlandIpcEvent* event) {
 		auto windowClass = QString::fromUtf8(args.at(2));
 		auto windowTitle = QString::fromUtf8(args.at(3));
 
-		auto* workspace = this->findWorkspaceByName(workspaceName, false);
+		auto* workspace =
+		    this->findWorkspaceByName(workspaceName, false, this->eventWorkspaceAddress(workspaceName));
 		if (!workspace) {
 			qCWarning(logHyprlandIpc) << "Got openwindow for workspace" << workspaceName
 			                          << "which was not previously tracked.";
@@ -562,6 +567,7 @@ void HyprlandIpc::onEvent(HyprlandIpcEvent* event) {
 		auto args = event->parseView(3);
 		auto ok = false;
 		auto windowAddress = args.at(0).toULongLong(&ok, 16);
+		const auto workspaceAddress = QString::fromUtf8(args.at(1));
 		auto workspaceName = QString::fromUtf8(args.at(2));
 
 		auto* toplevel = this->findToplevelByAddress(windowAddress, false);
@@ -571,7 +577,8 @@ void HyprlandIpc::onEvent(HyprlandIpcEvent* event) {
 			return;
 		}
 
-		HyprlandWorkspace* workspace = this->findWorkspaceByName(workspaceName, false);
+		HyprlandWorkspace* workspace =
+		    this->findWorkspaceByName(workspaceName, false, workspaceAddress);
 		if (!workspace) {
 			qCWarning(logHyprlandIpc) << "Got movewindowv2 event for workspace" << args.at(2)
 			                          << "which was not previously tracked.";
@@ -626,6 +633,10 @@ void HyprlandIpc::onEvent(HyprlandIpcEvent* event) {
 		auto* toplevel = this->findToplevelByAddress(windowAddress, true);
 		toplevel->bindableUrgent().setValue(true);
 	}
+}
+
+QString HyprlandIpc::eventWorkspaceAddress(const QString& workspace) const {
+	return this->workspaceAddresses ? workspace : QString();
 }
 
 HyprlandWorkspace* HyprlandIpc::findWorkspaceByName(
@@ -685,6 +696,7 @@ void HyprlandIpc::refreshWorkspaces(bool canCreate) {
 		for (auto entry: json) {
 			auto object = entry.toObject().toVariantMap();
 
+			this->workspaceAddresses = object.contains("address");
 			auto address = object.value("address").toString();
 			if (address.isEmpty()) address = QString::number(object.value("id").toInt());
 
