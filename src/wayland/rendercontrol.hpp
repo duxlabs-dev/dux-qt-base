@@ -2,15 +2,20 @@
 
 #include <memory>
 #include <optional>
+#include <utility>
 #include <vector>
 
 #include <qcolor.h>
 #include <qcoreevent.h>
+#include <qhash.h>
 #include <qimage.h>
+#include <qlist.h>
 #include <qobject.h>
 #include <qpoint.h>
+#include <qpointer.h>
 #include <qquickwindow.h>
 #include <qregion.h>
+#include <qscreen.h>
 #include <qsemaphore.h>
 #include <qsize.h>
 #include <qsocketnotifier.h>
@@ -161,12 +166,33 @@ private:
 		bool rendered = false;
 		bool failed = false;
 		bool pendingDamage = false;
+		// Counted in its screen's FrameSync until finishFrame() takes it out.
+		bool drawing = false;
+		QScreen* screen = nullptr;
 		qint64 polishNs = 0;
 		qint64 syncNs = 0;
 		qint64 waitNs = 0;
 		qint64 renderNs = 0;
 	};
 
+	using HeldFrames = QList<std::pair<QPointer<WaylandRenderControl>, std::shared_ptr<Frame>>>;
+
+	// Finished frames on a screen wait while another frame on it draws, then all commit at once.
+	struct FrameSync {
+		struct Screen {
+			qsizetype drawing = 0;
+			HeldFrames frames;
+			qint64 heldSince = 0;
+		};
+
+		QHash<QScreen*, Screen> screens;
+		QList<WaylandRenderControl*> controls;
+		QTimer* timer = nullptr;
+	};
+
+	static FrameSync& frameSync();
+	static void commitHeldFrames();
+	static void queueCommitHeldFrames();
 	bool initializeScene();
 	void releaseScene();
 	[[nodiscard]] bool inputOnly(QtWaylandClient::QWaylandWindow* waylandWindow) const;
@@ -184,6 +210,7 @@ private:
 	void frameDrawn(const Frame& frame, bool tracked);
 	void drawFrame(Frame& frame);
 	void finishFrame(const std::shared_ptr<Frame>& frame);
+	void completeFrame(const std::shared_ptr<Frame>& frame);
 	bool commitFrame(const Frame& frame, QtWaylandClient::QWaylandWindow* waylandWindow);
 	void skipFrame();
 	void commitWithoutFrame();
@@ -221,6 +248,8 @@ private:
 	quint64 commitRevision = 0;
 	qint64 requestedAt = 0;
 	qint64 inputAt = 0;
+	// When an update was asked for that has not arrived yet.
+	qint64 awaitingSince = 0;
 };
 
 } // namespace qs::wayland::render

@@ -1,5 +1,7 @@
 #include "rendercontrol.hpp"
+#include <algorithm>
 #include <chrono>
+#include <iterator>
 #include <memory>
 #include <optional>
 #include <utility>
@@ -34,6 +36,7 @@
 #include <qrect.h>
 #include <qregion.h>
 #include <qscopeguard.h>
+#include <qscreen.h>
 #include <qsemaphore.h>
 #include <qsgflatcolormaterial.h>
 #include <qsggeometry.h>
@@ -70,6 +73,10 @@ QS_LOGGING_CATEGORY(logRenderControl, "quickshell.wayland.rendercontrol", QtWarn
 constexpr qsizetype MAX_BUFFERS = 3;
 // Longer than a clock's tick, so its window keeps the buffers it repaints into.
 constexpr auto TRIM_DELAY = std::chrono::seconds(3);
+// Refreshes held frames wait for another window's callback.
+constexpr auto FRAME_SYNC_REFRESHES = 1.5;
+// Refreshes after which a callback is throttled, as for a hidden surface, and not waited for.
+constexpr auto FRAME_SYNC_STALE_REFRESHES = 3;
 quint64 FRAME_SERIAL = 0; // NOLINT
 
 QS_LOGGING_CATEGORY(logFrame, "quickshell.wayland.rendercontrol.frame", QtWarningMsg);
@@ -348,13 +355,108 @@ WaylandRenderControl::WaylandRenderControl(): pool(this) {
 	QObject::connect(&this->trimTimer, &QTimer::timeout, this, &WaylandRenderControl::trimBuffers);
 	QObject::connect(&this->fenceNotifier, &QSocketNotifier::activated, this, &WaylandRenderControl::onFenceSignaled);
 	// clang-format on
+
+	frameSync().controls.append(this);
 }
 
 WaylandRenderControl::Frame::~Frame() {
 	if (this->fence != -1) close(this->fence);
+	if (!this->drawing) return;
+
+	// Dropped with its window, possibly on the render thread; held frames must not wait for it.
+	auto* app = QCoreApplication::instance();
+	if (!app) return;
+	QMetaObject::invokeMethod(
+	    app,
+	    [screen = this->screen] {
+		    --frameSync().screens.tryEmplace(screen).iterator->drawing;
+		    commitHeldFrames();
+	    },
+	    Qt::QueuedConnection
+	);
 }
 
-WaylandRenderControl::~WaylandRenderControl() { this->releaseScene(); }
+WaylandRenderControl::FrameSync& WaylandRenderControl::frameSync() {
+	static FrameSync sync;
+	return sync;
+}
+
+void WaylandRenderControl::commitHeldFrames() {
+	auto& sync = frameSync();
+	const auto now = PresentationTracker::now();
+	qint64 wait = 0;
+	HeldFrames ready;
+
+	for (auto it = sync.screens.begin(); it != sync.screens.end();) {
+		auto& held = it.value();
+		if (held.frames.isEmpty()) {
+			it = held.drawing > 0 ? std::next(it) : sync.screens.erase(it);
+			continue;
+		}
+
+		// Frames on this screen still drawing or about to draw land a refresh later at most; waiting
+		// for them puts all on one repaint, and their callbacks stay in step from then on.
+		auto refresh = 1e9 / 60.0;
+		auto waiting = held.drawing > 0;
+		for (auto* control: std::as_const(sync.controls)) {
+			auto* window = control->window();
+			auto* screen = window ? window->screen() : nullptr;
+			if (!screen || screen != it.key()) continue;
+
+			if (screen->refreshRate() > 0) refresh = 1e9 / screen->refreshRate();
+			const auto since = control->frameQueued ? now : control->awaitingSince;
+			if (since && static_cast<double>(now - since) <= FRAME_SYNC_STALE_REFRESHES * refresh) {
+				waiting = true;
+			}
+		}
+
+		const auto deadline = held.heldSince + static_cast<qint64>(FRAME_SYNC_REFRESHES * refresh);
+		if (waiting && deadline > now) {
+			wait = wait > 0 ? std::min(wait, deadline - now) : deadline - now;
+			++it;
+			continue;
+		}
+		ready.append(std::exchange(held.frames, {}));
+		it = held.drawing > 0 ? std::next(it) : sync.screens.erase(it);
+	}
+
+	if (wait > 0) {
+		if (!sync.timer) {
+			sync.timer = new QTimer(QCoreApplication::instance());
+			sync.timer->setSingleShot(true);
+			sync.timer->setTimerType(Qt::PreciseTimer);
+			QObject::connect(
+			    sync.timer,
+			    &QTimer::timeout,
+			    sync.timer,
+			    &WaylandRenderControl::commitHeldFrames
+			);
+		}
+		sync.timer->start(std::chrono::ceil<std::chrono::milliseconds>(std::chrono::nanoseconds(wait)));
+	} else if (sync.timer) {
+		sync.timer->stop();
+	}
+
+	// Controls destroyed while held are skipped, and their frames dropped.
+	for (const auto& [control, frame]: std::as_const(ready)) {
+		if (control) control->completeFrame(frame);
+	}
+}
+
+void WaylandRenderControl::queueCommitHeldFrames() {
+	auto* app = QCoreApplication::instance();
+	if (!app) return;
+	QMetaObject::invokeMethod(app, [] { commitHeldFrames(); }, Qt::QueuedConnection);
+}
+
+WaylandRenderControl::~WaylandRenderControl() {
+	// The fence closes with pendingFrame, after the notifier would still watch it.
+	this->fenceNotifier.setEnabled(false);
+	frameSync().controls.removeOne(this);
+	// Held frames that waited for this window commit once it is gone.
+	if (this->awaitingSince || this->frameQueued) queueCommitHeldFrames();
+	this->releaseScene();
+}
 
 // initializeScene() builds the scene and its thread again.
 void WaylandRenderControl::releaseScene() {
@@ -419,7 +521,10 @@ void WaylandRenderControl::scheduleFrame() {
 	}
 	auto* window = this->window();
 	// An unexposed window starts no frame, so its request would only speed up the fallback.
-	if (window->isExposed()) qs::core::FrameAnimationDriver::requestFrame(window);
+	if (window->isExposed()) {
+		qs::core::FrameAnimationDriver::requestFrame(window);
+		if (!this->awaitingSince) this->awaitingSince = PresentationTracker::now();
+	}
 	window->requestUpdate();
 }
 
@@ -463,10 +568,15 @@ bool WaylandRenderControl::eventFilter(QObject* watched, QEvent* event) {
 	case QEvent::TouchBegin:
 		if (this->presentation) this->inputAt = PresentationTracker::now();
 		break;
-	case QEvent::UpdateRequest: this->queueFrame(); break;
+	case QEvent::UpdateRequest:
+		this->awaitingSince = 0;
+		this->queueFrame();
+		break;
 	case QEvent::Expose:
 		if (!this->window()->isExposed()) {
 			this->presented = false;
+			// Queued, since another window may be polishing and about to draw.
+			if (std::exchange(this->awaitingSince, 0)) queueCommitHeldFrames();
 			qs::core::FrameAnimationDriver::cancelFrame(this->window());
 			// The compositor releases the attached buffer after the unmap; trim it with the rest.
 			this->pool.forget();
@@ -579,6 +689,8 @@ void WaylandRenderControl::queueFrame() {
 			    control->frameQueued = false;
 			    control->renderFrame();
 		    }
+		    // A window held frames waited for may have drawn nothing.
+		    commitHeldFrames();
 		    qs::core::FrameAnimationDriver::framesDispatched();
 	    },
 	    Qt::QueuedConnection
@@ -656,6 +768,9 @@ void WaylandRenderControl::renderFrame() {
 	frame->repaint = std::exchange(this->repaintRequested, false);
 	this->frameInFlight = true;
 	this->frameRequested = false;
+	frame->drawing = true;
+	frame->screen = this->window()->screen();
+	++frameSync().screens.tryEmplace(frame->screen).iterator->drawing;
 	const auto acknowledge = std::exchange(this->damagePresented, false);
 	timer.restart();
 	this->renderThread->submit([this, frame, acknowledge] {
@@ -856,6 +971,15 @@ void WaylandRenderControl::finishFrame(const std::shared_ptr<Frame>& frame) {
 		return;
 	}
 
+	// Windows that animate together, like a popout and its frame chrome, commit together.
+	auto& held = *frameSync().screens.tryEmplace(frame->screen).iterator;
+	if (std::exchange(frame->drawing, false)) --held.drawing;
+	if (held.frames.isEmpty()) held.heldSince = PresentationTracker::now();
+	held.frames.append({this, frame});
+	commitHeldFrames();
+}
+
+void WaylandRenderControl::completeFrame(const std::shared_ptr<Frame>& frame) {
 	this->frameInFlight = false;
 	auto* window = this->window();
 	auto* waylandWindow = dynamic_cast<QtWaylandClient::QWaylandWindow*>(window->handle());
@@ -985,7 +1109,8 @@ void WaylandRenderControl::skipFrame() {
 		return;
 	}
 
-	qCWarning(logRenderControl) << "Graphics device lost for" << this->window() << "- rebuilding the scene";
+	qCWarning(logRenderControl) << "Graphics device lost for" << this->window()
+	                            << "- rebuilding the scene";
 	this->recoveringDevice = true;
 	this->releaseScene();
 	this->scheduleFrame();
