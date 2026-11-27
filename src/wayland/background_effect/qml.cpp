@@ -102,8 +102,10 @@ void BackgroundEffect::onWindowPolished() {
 
 	QRegion region;
 	if (this->mBlurRegion) {
-		region =
-		    this->mBlurRegion->applyTo(QRect(0, 0, this->mWindow->width(), this->mWindow->height()));
+		region = this->mBlurRegion->applyTo(
+		    QRect(0, 0, this->mWindow->width(), this->mWindow->height()),
+		    PendingRegion::Bound::Inside
+		);
 
 		auto scale = QHighDpiScaling::factor(this->mWindow);
 		if (!qFuzzyCompare(scale, 1.0)) {
