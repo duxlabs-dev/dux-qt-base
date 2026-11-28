@@ -71,23 +71,25 @@ class PendingRegion: public QObject {
 	///
 	/// Acts as the default for @@topLeftRadius, @@topRightRadius, @@bottomLeftRadius,
 	/// and @@bottomRightRadius.
-	Q_PROPERTY(qint32 radius READ radius WRITE setRadius NOTIFY radiusChanged);
+	///
+	/// Window masks round radii down to whole pixels.
+	Q_PROPERTY(qreal radius READ radius WRITE setRadius NOTIFY radiusChanged);
 	/// Top-left corner radius. Only applies when @@shape is `Rect`.
 	///
 	/// Defaults to @@radius, and may be reset by assigning `undefined`.
-	Q_PROPERTY(qint32 topLeftRadius READ topLeftRadius WRITE setTopLeftRadius RESET resetTopLeftRadius NOTIFY topLeftRadiusChanged);
+	Q_PROPERTY(qreal topLeftRadius READ topLeftRadius WRITE setTopLeftRadius RESET resetTopLeftRadius NOTIFY topLeftRadiusChanged);
 	/// Top-right corner radius. Only applies when @@shape is `Rect`.
 	///
 	/// Defaults to @@radius, and may be reset by assigning `undefined`.
-	Q_PROPERTY(qint32 topRightRadius READ topRightRadius WRITE setTopRightRadius RESET resetTopRightRadius NOTIFY topRightRadiusChanged);
+	Q_PROPERTY(qreal topRightRadius READ topRightRadius WRITE setTopRightRadius RESET resetTopRightRadius NOTIFY topRightRadiusChanged);
 	/// Bottom-left corner radius. Only applies when @@shape is `Rect`.
 	///
 	/// Defaults to @@radius, and may be reset by assigning `undefined`.
-	Q_PROPERTY(qint32 bottomLeftRadius READ bottomLeftRadius WRITE setBottomLeftRadius RESET resetBottomLeftRadius NOTIFY bottomLeftRadiusChanged);
+	Q_PROPERTY(qreal bottomLeftRadius READ bottomLeftRadius WRITE setBottomLeftRadius RESET resetBottomLeftRadius NOTIFY bottomLeftRadiusChanged);
 	/// Bottom-right corner radius. Only applies when @@shape is `Rect`.
 	///
 	/// Defaults to @@radius, and may be reset by assigning `undefined`.
-	Q_PROPERTY(qint32 bottomRightRadius READ bottomRightRadius WRITE setBottomRightRadius RESET resetBottomRightRadius NOTIFY bottomRightRadiusChanged);
+	Q_PROPERTY(qreal bottomRightRadius READ bottomRightRadius WRITE setBottomRightRadius RESET resetBottomRightRadius NOTIFY bottomRightRadiusChanged);
 	// clang-format on
 
 	/// Regions to apply on top of this region.
@@ -110,35 +112,46 @@ class PendingRegion: public QObject {
 	QML_NAMED_ELEMENT(Region);
 
 public:
+	/// How closely a built region follows the painted shape.
+	/// `Xor` children are built on the same bound, so their result is approximate.
+	enum class Bound : quint8 {
+		/// Integer rect and stepped corners, as used for input and visible masks.
+		Exact,
+		/// Every pixel is fully inside the shape.
+		Inside,
+		/// Every pixel the shape touches is covered.
+		Outside,
+	};
+
 	explicit PendingRegion(QObject* parent = nullptr);
 
 	void setItem(QQuickItem* item);
 
-	[[nodiscard]] qint32 radius() const;
-	void setRadius(qint32 radius);
+	[[nodiscard]] qreal radius() const;
+	void setRadius(qreal radius);
 
-	[[nodiscard]] qint32 topLeftRadius() const;
-	void setTopLeftRadius(qint32 radius);
+	[[nodiscard]] qreal topLeftRadius() const;
+	void setTopLeftRadius(qreal radius);
 	void resetTopLeftRadius();
 
-	[[nodiscard]] qint32 topRightRadius() const;
-	void setTopRightRadius(qint32 radius);
+	[[nodiscard]] qreal topRightRadius() const;
+	void setTopRightRadius(qreal radius);
 	void resetTopRightRadius();
 
-	[[nodiscard]] qint32 bottomLeftRadius() const;
-	void setBottomLeftRadius(qint32 radius);
+	[[nodiscard]] qreal bottomLeftRadius() const;
+	void setBottomLeftRadius(qreal radius);
 	void resetBottomLeftRadius();
 
-	[[nodiscard]] qint32 bottomRightRadius() const;
-	void setBottomRightRadius(qint32 radius);
+	[[nodiscard]] qreal bottomRightRadius() const;
+	void setBottomRightRadius(qreal radius);
 	void resetBottomRightRadius();
 
 	QQmlListProperty<PendingRegion> regions();
 
 	[[nodiscard]] bool empty() const;
-	[[nodiscard]] QRegion build() const;
-	[[nodiscard]] QRegion applyTo(QRegion& region) const;
-	[[nodiscard]] QRegion applyTo(const QRect& rect) const;
+	[[nodiscard]] QRegion build(Bound bound = Bound::Exact) const;
+	[[nodiscard]] QRegion applyTo(QRegion& region, Bound bound = Bound::Exact) const;
+	[[nodiscard]] QRegion applyTo(const QRect& rect, Bound bound = Bound::Exact) const;
 
 	RegionShape::Enum mShape = RegionShape::Rect;
 	Intersection::Enum mIntersection = Intersection::Combine;
@@ -169,6 +182,8 @@ private slots:
 	void onChildDestroyed();
 
 private:
+	[[nodiscard]] QRegion buildBounded(Bound bound) const;
+
 	static void regionsAppend(QQmlListProperty<PendingRegion>* prop, PendingRegion* region);
 	static PendingRegion* regionAt(QQmlListProperty<PendingRegion>* prop, qsizetype i);
 	static void regionsClear(QQmlListProperty<PendingRegion>* prop);
@@ -190,11 +205,11 @@ private:
 	qint32 mY = 0;
 	qint32 mWidth = 0;
 	qint32 mHeight = 0;
-	qint32 mRadius = 0;
-	qint32 mTopLeftRadius = 0;
-	qint32 mTopRightRadius = 0;
-	qint32 mBottomLeftRadius = 0;
-	qint32 mBottomRightRadius = 0;
+	qreal mRadius = 0;
+	qreal mTopLeftRadius = 0;
+	qreal mTopRightRadius = 0;
+	qreal mBottomLeftRadius = 0;
+	qreal mBottomRightRadius = 0;
 	quint8 mCornerOverrides = 0;
 
 	QList<PendingRegion*> mRegions;
